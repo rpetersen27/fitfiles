@@ -4,9 +4,112 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import FitParserModule from "fit-file-parser";
 
-const FitParser = FitParserModule.default ?? FitParserModule;
+type NumericField =
+  | "heart_rate"
+  | "power"
+  | "speed"
+  | "distance"
+  | "elapsed_time"
+  | "timer_time";
 
-function formatDuration(seconds) {
+interface MessageIndexValue {
+  value: number;
+}
+
+interface FitRecord {
+  heart_rate?: number;
+  power?: number;
+  speed?: number;
+  distance?: number;
+  elapsed_time?: number;
+  timer_time?: number;
+}
+
+interface FitSession {
+  total_elapsed_time?: number;
+  total_timer_time?: number;
+  avg_heart_rate?: number;
+  max_heart_rate?: number;
+  total_distance?: number;
+  avg_speed?: number;
+  enhanced_avg_speed?: number;
+  avg_power?: number;
+  max_power?: number;
+}
+
+interface FitLap extends FitSession {
+  message_index?: number | MessageIndexValue;
+  start_time?: string;
+  records?: FitRecord[];
+}
+
+interface FitParseResult {
+  sessions?: FitSession[];
+  laps?: FitLap[];
+  records?: FitRecord[];
+}
+
+interface Stats {
+  totalElapsedTime: number | null;
+  totalTimerTime: number | null;
+  avgHeartRate: number | null;
+  maxHeartRate: number | null;
+  totalDistance: number | null;
+  avgSpeed: number | null;
+  avgPower: number | null;
+  maxPower: number | null;
+  heartRateDiffAfterOneMinute: number | null;
+  efficiency: number | null;
+  heartRateDrift: number | null;
+  powerDrift: number | null;
+}
+
+interface LapStats extends Stats {
+  label: string;
+  startTime: string | null;
+}
+
+interface PrintBlockOptions {
+  includeHeartRateDiffAfterOneMinute?: boolean;
+  includeEfficiency?: boolean;
+}
+
+type FitParserConstructor = new (
+  options?: import("fit-file-parser").FitParserOptions
+) => {
+  parse(
+    content: ArrayBuffer | ArrayBufferView,
+    callback: (error: string | null, data: unknown) => void
+  ): void;
+};
+
+function resolveFitParserConstructor(moduleValue: unknown): FitParserConstructor {
+  if (typeof moduleValue === "function") {
+    return moduleValue as FitParserConstructor;
+  }
+
+  if (moduleValue && typeof moduleValue === "object") {
+    const maybeDefault = (moduleValue as { default?: unknown }).default;
+
+    if (typeof maybeDefault === "function") {
+      return maybeDefault as FitParserConstructor;
+    }
+
+    if (maybeDefault && typeof maybeDefault === "object") {
+      const nestedDefault = (maybeDefault as { default?: unknown }).default;
+
+      if (typeof nestedDefault === "function") {
+        return nestedDefault as FitParserConstructor;
+      }
+    }
+  }
+
+  throw new Error("Unsupported fit-file-parser module shape.");
+}
+
+const FitParser = resolveFitParserConstructor(FitParserModule);
+
+function formatDuration(seconds: number | null | undefined): string {
   if (seconds == null || Number.isNaN(seconds)) {
     return "-";
   }
@@ -21,7 +124,7 @@ function formatDuration(seconds) {
     .join(":");
 }
 
-function formatNumber(value, digits = 1) {
+function formatNumber(value: number | null | undefined, digits = 1): string {
   if (value == null || Number.isNaN(value)) {
     return "-";
   }
@@ -29,7 +132,7 @@ function formatNumber(value, digits = 1) {
   return Number(value).toFixed(digits);
 }
 
-function formatMeters(distanceMeters) {
+function formatMeters(distanceMeters: number | null | undefined): string {
   if (distanceMeters == null || Number.isNaN(distanceMeters)) {
     return "-";
   }
@@ -37,7 +140,7 @@ function formatMeters(distanceMeters) {
   return `${formatNumber(distanceMeters / 1000, 2)} km`;
 }
 
-function formatSpeed(speedMetersPerSecond) {
+function formatSpeed(speedMetersPerSecond: number | null | undefined): string {
   if (speedMetersPerSecond == null || Number.isNaN(speedMetersPerSecond)) {
     return "-";
   }
@@ -45,7 +148,7 @@ function formatSpeed(speedMetersPerSecond) {
   return `${formatNumber(speedMetersPerSecond * 3.6, 2)} km/h`;
 }
 
-function formatHeartRate(value) {
+function formatHeartRate(value: number | null | undefined): string {
   if (value == null || Number.isNaN(value)) {
     return "-";
   }
@@ -53,7 +156,7 @@ function formatHeartRate(value) {
   return `${Math.round(value)} bpm`;
 }
 
-function formatPower(value) {
+function formatPower(value: number | null | undefined): string {
   if (value == null || Number.isNaN(value)) {
     return "-";
   }
@@ -61,7 +164,7 @@ function formatPower(value) {
   return `${Math.round(value)} W`;
 }
 
-function formatHeartRateDifference(value) {
+function formatHeartRateDifference(value: number | null | undefined): string {
   if (value == null || Number.isNaN(value)) {
     return "-";
   }
@@ -71,7 +174,7 @@ function formatHeartRateDifference(value) {
   return `${sign}${rounded} bpm`;
 }
 
-function formatEfficiency(value) {
+function formatEfficiency(value: number | null | undefined): string {
   if (value == null || Number.isNaN(value)) {
     return "-";
   }
@@ -79,7 +182,7 @@ function formatEfficiency(value) {
   return `${formatNumber(value, 2)} W/BPM`;
 }
 
-function formatDrift(value, unit) {
+function formatDrift(value: number | null | undefined, unit: string): string {
   if (value == null || Number.isNaN(value)) {
     return "-";
   }
@@ -89,7 +192,9 @@ function formatDrift(value, unit) {
   return `${sign}${rounded} ${unit}`;
 }
 
-function unwrapFitValue(value) {
+function unwrapFitValue(
+  value: number | MessageIndexValue | null | undefined
+): number | null {
   if (value == null) {
     return null;
   }
@@ -101,7 +206,11 @@ function unwrapFitValue(value) {
   return value;
 }
 
-function weightedAverage(parts, fieldName, weightFieldName) {
+function weightedAverage<T, K extends keyof T, W extends keyof T>(
+  parts: T[],
+  fieldName: K,
+  weightFieldName: W
+): number | null {
   let totalWeight = 0;
   let weightedSum = 0;
 
@@ -110,8 +219,8 @@ function weightedAverage(parts, fieldName, weightFieldName) {
     const weight = part[weightFieldName];
 
     if (
-      value == null ||
-      weight == null ||
+      typeof value !== "number" ||
+      typeof weight !== "number" ||
       Number.isNaN(value) ||
       Number.isNaN(weight) ||
       weight <= 0
@@ -130,10 +239,19 @@ function weightedAverage(parts, fieldName, weightFieldName) {
   return weightedSum / totalWeight;
 }
 
-function maxValue(parts, fieldName) {
-  const values = parts
-    .map((part) => part[fieldName])
-    .filter((value) => value != null && !Number.isNaN(value));
+function maxValue<T, K extends keyof T>(
+  parts: T[],
+  fieldName: K
+): number | null {
+  const values: number[] = [];
+
+  for (const part of parts) {
+    const value = part[fieldName];
+
+    if (typeof value === "number" && !Number.isNaN(value)) {
+      values.push(value);
+    }
+  }
 
   if (values.length === 0) {
     return null;
@@ -142,10 +260,19 @@ function maxValue(parts, fieldName) {
   return Math.max(...values);
 }
 
-function sumValue(parts, fieldName) {
-  const values = parts
-    .map((part) => part[fieldName])
-    .filter((value) => value != null && !Number.isNaN(value));
+function sumValue<T, K extends keyof T>(
+  parts: T[],
+  fieldName: K
+): number | null {
+  const values: number[] = [];
+
+  for (const part of parts) {
+    const value = part[fieldName];
+
+    if (typeof value === "number" && !Number.isNaN(value)) {
+      values.push(value);
+    }
+  }
 
   if (values.length === 0) {
     return null;
@@ -154,8 +281,12 @@ function sumValue(parts, fieldName) {
   return values.reduce((sum, value) => sum + value, 0);
 }
 
-function averageValue(records, fieldName, durationFieldName) {
-  if (!Array.isArray(records) || records.length === 0) {
+function averageValue(
+  records: FitRecord[],
+  fieldName: NumericField,
+  durationFieldName: "timer_time" | "elapsed_time"
+): number | null {
+  if (records.length === 0) {
     return null;
   }
 
@@ -167,6 +298,11 @@ function averageValue(records, fieldName, durationFieldName) {
   for (let index = 0; index < records.length; index += 1) {
     const current = records[index];
     const next = records[index + 1];
+
+    if (!current) {
+      continue;
+    }
+
     const value = current[fieldName];
 
     if (value == null || Number.isNaN(value)) {
@@ -213,13 +349,18 @@ function averageValue(records, fieldName, durationFieldName) {
   return null;
 }
 
-function buildStatsFromRecords(records) {
-  if (!Array.isArray(records) || records.length === 0) {
+function buildStatsFromRecords(records: FitRecord[]): Stats | null {
+  if (records.length === 0) {
     return null;
   }
 
   const first = records[0];
   const last = records.at(-1);
+
+  if (!first || !last) {
+    return null;
+  }
+
   const startDistance = first.distance ?? 0;
   const endDistance = last.distance ?? null;
   const elapsedTime =
@@ -231,9 +372,7 @@ function buildStatsFromRecords(records) {
       ? last.timer_time - first.timer_time
       : null;
   const distance =
-    endDistance != null && startDistance != null
-      ? Math.max(0, endDistance - startDistance)
-      : null;
+    endDistance != null ? Math.max(0, endDistance - startDistance) : null;
 
   return {
     totalElapsedTime: elapsedTime,
@@ -247,10 +386,17 @@ function buildStatsFromRecords(records) {
         : averageValue(records, "speed", "timer_time"),
     avgPower: averageValue(records, "power", "timer_time"),
     maxPower: maxValue(records, "power"),
+    heartRateDiffAfterOneMinute: null,
+    efficiency: null,
+    heartRateDrift: null,
+    powerDrift: null
   };
 }
 
-function calculateEfficiency(avgPower, avgHeartRate) {
+function calculateEfficiency(
+  avgPower: number | null | undefined,
+  avgHeartRate: number | null | undefined
+): number | null {
   if (
     avgPower == null ||
     avgHeartRate == null ||
@@ -264,13 +410,13 @@ function calculateEfficiency(avgPower, avgHeartRate) {
   return avgPower / avgHeartRate;
 }
 
-function heartRateDifferenceAfterOneMinute(records) {
-  if (!Array.isArray(records) || records.length === 0) {
+function heartRateDifferenceAfterOneMinute(records: FitRecord[]): number | null {
+  if (records.length === 0) {
     return null;
   }
 
   const startRecord = records.find(
-    (record) => record.heart_rate != null && !Number.isNaN(record.heart_rate),
+    (record) => record.heart_rate != null && !Number.isNaN(record.heart_rate)
   );
 
   if (
@@ -288,19 +434,29 @@ function heartRateDifferenceAfterOneMinute(records) {
       !Number.isNaN(record.timer_time) &&
       record.timer_time >= targetTime &&
       record.heart_rate != null &&
-      !Number.isNaN(record.heart_rate),
+      !Number.isNaN(record.heart_rate)
   );
 
-  if (!oneMinuteRecord) {
+  if (!oneMinuteRecord || oneMinuteRecord.heart_rate == null) {
     return null;
   }
 
-  return oneMinuteRecord.heart_rate - startRecord.heart_rate;
+  const startHeartRate = startRecord.heart_rate;
+
+  if (startHeartRate == null) {
+    return null;
+  }
+
+  return oneMinuteRecord.heart_rate - startHeartRate;
 }
 
-function averageOverRange(records, fieldName, startTime, endTime) {
+function averageOverRange(
+  records: FitRecord[],
+  fieldName: NumericField,
+  startTime: number | null | undefined,
+  endTime: number | null | undefined
+): number | null {
   if (
-    !Array.isArray(records) ||
     records.length === 0 ||
     startTime == null ||
     endTime == null ||
@@ -315,6 +471,11 @@ function averageOverRange(records, fieldName, startTime, endTime) {
   for (let index = 0; index < records.length - 1; index += 1) {
     const current = records[index];
     const next = records[index + 1];
+
+    if (!current || !next) {
+      continue;
+    }
+
     const value = current[fieldName];
     const currentTime = current.timer_time;
     const nextTime = next.timer_time;
@@ -350,14 +511,17 @@ function averageOverRange(records, fieldName, startTime, endTime) {
   return weightedSum / totalDuration;
 }
 
-function calculateHalfDrift(records, fieldName) {
-  if (!Array.isArray(records) || records.length < 2) {
+function calculateHalfDrift(
+  records: FitRecord[],
+  fieldName: NumericField
+): number | null {
+  if (records.length < 2) {
     return null;
   }
 
   const validTimes = records
     .map((record) => record.timer_time)
-    .filter((value) => value != null && !Number.isNaN(value));
+    .filter((value): value is number => value != null && !Number.isNaN(value));
 
   if (validTimes.length < 2) {
     return null;
@@ -365,6 +529,11 @@ function calculateHalfDrift(records, fieldName) {
 
   const startTime = validTimes[0];
   const endTime = validTimes.at(-1);
+
+  if (startTime == null || endTime == null) {
+    return null;
+  }
+
   const midpoint = startTime + (endTime - startTime) / 2;
 
   if (midpoint <= startTime || midpoint >= endTime) {
@@ -375,13 +544,13 @@ function calculateHalfDrift(records, fieldName) {
     records,
     fieldName,
     startTime,
-    midpoint,
+    midpoint
   );
   const secondHalfAverage = averageOverRange(
     records,
     fieldName,
     midpoint,
-    endTime,
+    endTime
   );
 
   if (firstHalfAverage == null || secondHalfAverage == null) {
@@ -391,7 +560,7 @@ function calculateHalfDrift(records, fieldName) {
   return secondHalfAverage - firstHalfAverage;
 }
 
-function mergeStats(primary, fallback) {
+function mergeStats(primary: Stats | null, fallback: Stats | null): Stats | null {
   if (!primary) {
     return fallback;
   }
@@ -414,11 +583,11 @@ function mergeStats(primary, fallback) {
       fallback.heartRateDiffAfterOneMinute,
     efficiency: primary.efficiency ?? fallback.efficiency,
     heartRateDrift: primary.heartRateDrift ?? fallback.heartRateDrift,
-    powerDrift: primary.powerDrift ?? fallback.powerDrift,
+    powerDrift: primary.powerDrift ?? fallback.powerDrift
   };
 }
 
-function normalizeSession(session) {
+function normalizeSession(session: FitSession): Stats {
   return {
     totalElapsedTime: session.total_elapsed_time ?? null,
     totalTimerTime: session.total_timer_time ?? null,
@@ -428,16 +597,19 @@ function normalizeSession(session) {
     avgSpeed: session.avg_speed ?? session.enhanced_avg_speed ?? null,
     avgPower: session.avg_power ?? null,
     maxPower: session.max_power ?? null,
+    heartRateDiffAfterOneMinute: null,
+    efficiency: null,
+    heartRateDrift: null,
+    powerDrift: null
   };
 }
 
-function normalizeLap(lap, index) {
+function normalizeLap(lap: FitLap, index: number): LapStats {
   const lapIndex = unwrapFitValue(lap.message_index);
+  const labelIndex = lapIndex != null ? lapIndex + 1 : index + 1;
 
   return {
-    label: Number.isFinite(lapIndex)
-      ? `Lap ${lapIndex + 1}`
-      : `Lap ${index + 1}`,
+    label: `Lap ${labelIndex}`,
     startTime: lap.start_time ?? null,
     totalElapsedTime: lap.total_elapsed_time ?? null,
     totalTimerTime: lap.total_timer_time ?? null,
@@ -448,51 +620,49 @@ function normalizeLap(lap, index) {
     avgPower: lap.avg_power ?? null,
     maxPower: lap.max_power ?? null,
     heartRateDiffAfterOneMinute: null,
-    efficiency: calculateEfficiency(
-      lap.avg_power ?? null,
-      lap.avg_heart_rate ?? null,
-    ),
+    efficiency: calculateEfficiency(lap.avg_power ?? null, lap.avg_heart_rate ?? null),
     heartRateDrift: null,
-    powerDrift: null,
+    powerDrift: null
   };
 }
 
-function summarizeSessions(sessions) {
+function summarizeSessions(sessions: FitSession[]): Stats | null {
   if (sessions.length === 0) {
     return null;
   }
 
   if (sessions.length === 1) {
-    return normalizeSession(sessions[0]);
+    const [session] = sessions;
+    return session ? normalizeSession(session) : null;
   }
 
   return {
     totalElapsedTime: sumValue(sessions, "total_elapsed_time"),
     totalTimerTime: sumValue(sessions, "total_timer_time"),
-    avgHeartRate: weightedAverage(
-      sessions,
-      "avg_heart_rate",
-      "total_timer_time",
-    ),
+    avgHeartRate: weightedAverage(sessions, "avg_heart_rate", "total_timer_time"),
     maxHeartRate: maxValue(sessions, "max_heart_rate"),
     totalDistance: sumValue(sessions, "total_distance"),
     avgSpeed: weightedAverage(
       sessions.map((session) => ({
         avg_speed: session.avg_speed ?? session.enhanced_avg_speed ?? null,
-        total_timer_time: session.total_timer_time ?? null,
+        total_timer_time: session.total_timer_time ?? null
       })),
       "avg_speed",
-      "total_timer_time",
+      "total_timer_time"
     ),
     avgPower: weightedAverage(sessions, "avg_power", "total_timer_time"),
     maxPower: maxValue(sessions, "max_power"),
+    heartRateDiffAfterOneMinute: null,
+    efficiency: null,
+    heartRateDrift: null,
+    powerDrift: null
   };
 }
 
-function printBlock(title, stats, options = {}) {
+function printBlock(title: string, stats: Stats, options: PrintBlockOptions = {}): void {
   const {
     includeHeartRateDiffAfterOneMinute = false,
-    includeEfficiency = false,
+    includeEfficiency = false
   } = options;
 
   console.log(title);
@@ -502,16 +672,14 @@ function printBlock(title, stats, options = {}) {
   console.log(`  Max HF:            ${formatHeartRate(stats.maxHeartRate)}`);
   if (includeHeartRateDiffAfterOneMinute) {
     console.log(
-      `  HF Δ (60 s): ${formatHeartRateDifference(stats.heartRateDiffAfterOneMinute)}`,
+      `  HF Δ (60 s):       ${formatHeartRateDifference(stats.heartRateDiffAfterOneMinute)}`
     );
   }
   if (includeEfficiency) {
     console.log(`  Efficiency:        ${formatEfficiency(stats.efficiency)}`);
   }
   if (includeHeartRateDiffAfterOneMinute) {
-    console.log(
-      `  HF drift:          ${formatDrift(stats.heartRateDrift, "bpm")}`,
-    );
+    console.log(`  HF drift:          ${formatDrift(stats.heartRateDrift, "bpm")}`);
     console.log(`  Watt drift:        ${formatDrift(stats.powerDrift, "W")}`);
   }
   console.log(`  Distance:          ${formatMeters(stats.totalDistance)}`);
@@ -520,29 +688,29 @@ function printBlock(title, stats, options = {}) {
   console.log(`  Max Watt:          ${formatPower(stats.maxPower)}`);
 }
 
-function parseFit(buffer) {
+async function parseFit(buffer: Buffer): Promise<FitParseResult> {
   const parser = new FitParser({
     force: true,
     mode: "both",
     elapsedRecordField: true,
     speedUnit: "m/s",
     lengthUnit: "m",
-    temperatureUnit: "celsius",
+    temperatureUnit: "celsius"
   });
 
   return new Promise((resolve, reject) => {
     parser.parse(buffer, (error, data) => {
       if (error) {
-        reject(error);
+        reject(new Error(error));
         return;
       }
 
-      resolve(data);
+      resolve((data ?? {}) as FitParseResult);
     });
   });
 }
 
-async function main() {
+async function main(): Promise<void> {
   const filePath = process.argv[2];
 
   if (!filePath) {
@@ -560,7 +728,7 @@ async function main() {
   const records = Array.isArray(parsed.records) ? parsed.records : [];
   const overall = mergeStats(
     summarizeSessions(sessions),
-    buildStatsFromRecords(records),
+    buildStatsFromRecords(records)
   );
 
   if (!overall) {
@@ -585,29 +753,29 @@ async function main() {
     const lapRecords = Array.isArray(lap.records) ? lap.records : [];
     const lapSummary = normalizeLap(lap, index);
     const lapFallback = buildStatsFromRecords(lapRecords);
-    const normalizedLap = {
-      ...lapSummary,
-      ...mergeStats(lapSummary, {
-        ...lapFallback,
-        efficiency: calculateEfficiency(
-          lapFallback?.avgPower,
-          lapFallback?.avgHeartRate,
-        ),
-        heartRateDiffAfterOneMinute:
-          heartRateDifferenceAfterOneMinute(lapRecords),
+    const mergedLapStats =
+      mergeStats(lapSummary, {
+        ...(lapFallback ?? normalizeSession({})),
+        efficiency: calculateEfficiency(lapFallback?.avgPower, lapFallback?.avgHeartRate),
+        heartRateDiffAfterOneMinute: heartRateDifferenceAfterOneMinute(lapRecords),
         heartRateDrift: calculateHalfDrift(lapRecords, "heart_rate"),
-        powerDrift: calculateHalfDrift(lapRecords, "power"),
-      }),
+        powerDrift: calculateHalfDrift(lapRecords, "power")
+      }) ?? lapSummary;
+    const normalizedLap: LapStats = {
+      ...lapSummary,
+      ...mergedLapStats
     };
+
     console.log("");
     printBlock(`  ${normalizedLap.label}`, normalizedLap, {
       includeHeartRateDiffAfterOneMinute: true,
-      includeEfficiency: true,
+      includeEfficiency: true
     });
   }
 }
 
-main().catch((error) => {
-  console.error(`Error: ${error.message}`);
+void main().catch((error: unknown) => {
+  const message = error instanceof Error ? error.message : String(error);
+  console.error(`Error: ${message}`);
   process.exitCode = 1;
 });

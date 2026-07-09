@@ -2,6 +2,8 @@
 
 Small Node.js CLI for analyzing cycling `.fit` files.
 
+The CLI is now written in TypeScript and compiled to `dist/`.
+
 ## What it prints
 
 - Complete duration
@@ -21,12 +23,13 @@ For the first version, a section is defined as a FIT `lap` message. That matches
 
 ```bash
 npm install
+npm run build
 ```
 
 ## Usage
 
 ```bash
-npx fit-analyze ./path/to/activity.fit
+node dist/cli.js ./path/to/activity.fit
 ```
 
 Or after linking globally:

@@ -4,10 +4,12 @@
   "description": "CLI for analyzing cycling FIT files overall and per section.",
   "type": "module",
   "bin": {
-    "fit-analyze": "./src/cli.js"
+    "fit-analyze": "./dist/cli.js"
   },
   "scripts": {
-    "check": "node --check src/cli.js"
+    "build": "tsc --project tsconfig.json",
+    "check": "npm run build",
+    "start": "node dist/cli.js"
   },
   "keywords": [
     "fit",
@@ -18,5 +20,9 @@
   "license": "MIT",
   "dependencies": {
     "fit-file-parser": "^1.9.3"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.1",
+    "typescript": "^7.0.2"
   }
 }
