@@ -1,0 +1,22 @@
+{
+  "name": "fitfiles-cli",
+  "version": "0.1.0",
+  "description": "CLI for analyzing cycling FIT files overall and per section.",
+  "type": "module",
+  "bin": {
+    "fit-analyze": "./src/cli.js"
+  },
+  "scripts": {
+    "check": "node --check src/cli.js"
+  },
+  "keywords": [
+    "fit",
+    "cycling",
+    "cli",
+    "analysis"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "fit-file-parser": "^1.9.3"
+  }
+}
