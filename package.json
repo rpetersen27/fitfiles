@@ -7,8 +7,11 @@
     "fit-analyze": "./dist/cli.js"
   },
   "scripts": {
-    "build": "tsc --project tsconfig.json",
+    "build": "npm run build:cli && npm run build:web",
+    "build:cli": "tsc --project tsconfig.json",
+    "build:web": "vite build",
     "check": "npm run build",
+    "dev": "vite",
     "start": "node dist/cli.js"
   },
   "keywords": [
@@ -23,6 +26,7 @@
   },
   "devDependencies": {
     "@types/node": "^26.1.1",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "vite": "^8.1.4"
   }
 }
