@@ -61,6 +61,46 @@ function formatPower(value) {
   return `${Math.round(value)} W`;
 }
 
+function formatHeartRateDifference(value) {
+  if (value == null || Number.isNaN(value)) {
+    return "-";
+  }
+
+  const rounded = Math.round(value);
+  const sign = rounded > 0 ? "+" : "";
+  return `${sign}${rounded} bpm`;
+}
+
+function formatEfficiency(value) {
+  if (value == null || Number.isNaN(value)) {
+    return "-";
+  }
+
+  return `${formatNumber(value, 2)} W/BPM`;
+}
+
+function formatDrift(value, unit) {
+  if (value == null || Number.isNaN(value)) {
+    return "-";
+  }
+
+  const rounded = Math.round(value);
+  const sign = rounded > 0 ? "+" : "";
+  return `${sign}${rounded} ${unit}`;
+}
+
+function unwrapFitValue(value) {
+  if (value == null) {
+    return null;
+  }
+
+  if (typeof value === "object" && "value" in value) {
+    return value.value;
+  }
+
+  return value;
+}
+
 function weightedAverage(parts, fieldName, weightFieldName) {
   let totalWeight = 0;
   let weightedSum = 0;
@@ -69,7 +109,13 @@ function weightedAverage(parts, fieldName, weightFieldName) {
     const value = part[fieldName];
     const weight = part[weightFieldName];
 
-    if (value == null || weight == null || Number.isNaN(value) || Number.isNaN(weight) || weight <= 0) {
+    if (
+      value == null ||
+      weight == null ||
+      Number.isNaN(value) ||
+      Number.isNaN(weight) ||
+      weight <= 0
+    ) {
       continue;
     }
 
@@ -196,10 +242,153 @@ function buildStatsFromRecords(records) {
     maxHeartRate: maxValue(records, "heart_rate"),
     totalDistance: distance,
     avgSpeed:
-      timerTime != null && timerTime > 0 && distance != null ? distance / timerTime : averageValue(records, "speed", "timer_time"),
+      timerTime != null && timerTime > 0 && distance != null
+        ? distance / timerTime
+        : averageValue(records, "speed", "timer_time"),
     avgPower: averageValue(records, "power", "timer_time"),
-    maxPower: maxValue(records, "power")
+    maxPower: maxValue(records, "power"),
   };
+}
+
+function calculateEfficiency(avgPower, avgHeartRate) {
+  if (
+    avgPower == null ||
+    avgHeartRate == null ||
+    Number.isNaN(avgPower) ||
+    Number.isNaN(avgHeartRate) ||
+    avgHeartRate <= 0
+  ) {
+    return null;
+  }
+
+  return avgPower / avgHeartRate;
+}
+
+function heartRateDifferenceAfterOneMinute(records) {
+  if (!Array.isArray(records) || records.length === 0) {
+    return null;
+  }
+
+  const startRecord = records.find(
+    (record) => record.heart_rate != null && !Number.isNaN(record.heart_rate),
+  );
+
+  if (
+    !startRecord ||
+    startRecord.timer_time == null ||
+    Number.isNaN(startRecord.timer_time)
+  ) {
+    return null;
+  }
+
+  const targetTime = startRecord.timer_time + 60;
+  const oneMinuteRecord = records.find(
+    (record) =>
+      record.timer_time != null &&
+      !Number.isNaN(record.timer_time) &&
+      record.timer_time >= targetTime &&
+      record.heart_rate != null &&
+      !Number.isNaN(record.heart_rate),
+  );
+
+  if (!oneMinuteRecord) {
+    return null;
+  }
+
+  return oneMinuteRecord.heart_rate - startRecord.heart_rate;
+}
+
+function averageOverRange(records, fieldName, startTime, endTime) {
+  if (
+    !Array.isArray(records) ||
+    records.length === 0 ||
+    startTime == null ||
+    endTime == null ||
+    endTime <= startTime
+  ) {
+    return null;
+  }
+
+  let weightedSum = 0;
+  let totalDuration = 0;
+
+  for (let index = 0; index < records.length - 1; index += 1) {
+    const current = records[index];
+    const next = records[index + 1];
+    const value = current[fieldName];
+    const currentTime = current.timer_time;
+    const nextTime = next.timer_time;
+
+    if (
+      value == null ||
+      currentTime == null ||
+      nextTime == null ||
+      Number.isNaN(value) ||
+      Number.isNaN(currentTime) ||
+      Number.isNaN(nextTime) ||
+      nextTime <= currentTime
+    ) {
+      continue;
+    }
+
+    const overlapStart = Math.max(startTime, currentTime);
+    const overlapEnd = Math.min(endTime, nextTime);
+    const duration = overlapEnd - overlapStart;
+
+    if (duration <= 0) {
+      continue;
+    }
+
+    weightedSum += value * duration;
+    totalDuration += duration;
+  }
+
+  if (totalDuration <= 0) {
+    return null;
+  }
+
+  return weightedSum / totalDuration;
+}
+
+function calculateHalfDrift(records, fieldName) {
+  if (!Array.isArray(records) || records.length < 2) {
+    return null;
+  }
+
+  const validTimes = records
+    .map((record) => record.timer_time)
+    .filter((value) => value != null && !Number.isNaN(value));
+
+  if (validTimes.length < 2) {
+    return null;
+  }
+
+  const startTime = validTimes[0];
+  const endTime = validTimes.at(-1);
+  const midpoint = startTime + (endTime - startTime) / 2;
+
+  if (midpoint <= startTime || midpoint >= endTime) {
+    return null;
+  }
+
+  const firstHalfAverage = averageOverRange(
+    records,
+    fieldName,
+    startTime,
+    midpoint,
+  );
+  const secondHalfAverage = averageOverRange(
+    records,
+    fieldName,
+    midpoint,
+    endTime,
+  );
+
+  if (firstHalfAverage == null || secondHalfAverage == null) {
+    return null;
+  }
+
+  return secondHalfAverage - firstHalfAverage;
 }
 
 function mergeStats(primary, fallback) {
@@ -219,7 +408,13 @@ function mergeStats(primary, fallback) {
     totalDistance: primary.totalDistance ?? fallback.totalDistance,
     avgSpeed: primary.avgSpeed ?? fallback.avgSpeed,
     avgPower: primary.avgPower ?? fallback.avgPower,
-    maxPower: primary.maxPower ?? fallback.maxPower
+    maxPower: primary.maxPower ?? fallback.maxPower,
+    heartRateDiffAfterOneMinute:
+      primary.heartRateDiffAfterOneMinute ??
+      fallback.heartRateDiffAfterOneMinute,
+    efficiency: primary.efficiency ?? fallback.efficiency,
+    heartRateDrift: primary.heartRateDrift ?? fallback.heartRateDrift,
+    powerDrift: primary.powerDrift ?? fallback.powerDrift,
   };
 }
 
@@ -232,13 +427,17 @@ function normalizeSession(session) {
     totalDistance: session.total_distance ?? null,
     avgSpeed: session.avg_speed ?? session.enhanced_avg_speed ?? null,
     avgPower: session.avg_power ?? null,
-    maxPower: session.max_power ?? null
+    maxPower: session.max_power ?? null,
   };
 }
 
 function normalizeLap(lap, index) {
+  const lapIndex = unwrapFitValue(lap.message_index);
+
   return {
-    label: lap.message_index != null ? `Lap ${lap.message_index + 1}` : `Lap ${index + 1}`,
+    label: Number.isFinite(lapIndex)
+      ? `Lap ${lapIndex + 1}`
+      : `Lap ${index + 1}`,
     startTime: lap.start_time ?? null,
     totalElapsedTime: lap.total_elapsed_time ?? null,
     totalTimerTime: lap.total_timer_time ?? null,
@@ -247,7 +446,14 @@ function normalizeLap(lap, index) {
     totalDistance: lap.total_distance ?? null,
     avgSpeed: lap.avg_speed ?? lap.enhanced_avg_speed ?? null,
     avgPower: lap.avg_power ?? null,
-    maxPower: lap.max_power ?? null
+    maxPower: lap.max_power ?? null,
+    heartRateDiffAfterOneMinute: null,
+    efficiency: calculateEfficiency(
+      lap.avg_power ?? null,
+      lap.avg_heart_rate ?? null,
+    ),
+    heartRateDrift: null,
+    powerDrift: null,
   };
 }
 
@@ -263,28 +469,51 @@ function summarizeSessions(sessions) {
   return {
     totalElapsedTime: sumValue(sessions, "total_elapsed_time"),
     totalTimerTime: sumValue(sessions, "total_timer_time"),
-    avgHeartRate: weightedAverage(sessions, "avg_heart_rate", "total_timer_time"),
+    avgHeartRate: weightedAverage(
+      sessions,
+      "avg_heart_rate",
+      "total_timer_time",
+    ),
     maxHeartRate: maxValue(sessions, "max_heart_rate"),
     totalDistance: sumValue(sessions, "total_distance"),
     avgSpeed: weightedAverage(
       sessions.map((session) => ({
         avg_speed: session.avg_speed ?? session.enhanced_avg_speed ?? null,
-        total_timer_time: session.total_timer_time ?? null
+        total_timer_time: session.total_timer_time ?? null,
       })),
       "avg_speed",
-      "total_timer_time"
+      "total_timer_time",
     ),
     avgPower: weightedAverage(sessions, "avg_power", "total_timer_time"),
-    maxPower: maxValue(sessions, "max_power")
+    maxPower: maxValue(sessions, "max_power"),
   };
 }
 
-function printBlock(title, stats) {
+function printBlock(title, stats, options = {}) {
+  const {
+    includeHeartRateDiffAfterOneMinute = false,
+    includeEfficiency = false,
+  } = options;
+
   console.log(title);
   console.log(`  Complete duration: ${formatDuration(stats.totalElapsedTime)}`);
   console.log(`  Active duration:   ${formatDuration(stats.totalTimerTime)}`);
   console.log(`  Average HF:        ${formatHeartRate(stats.avgHeartRate)}`);
   console.log(`  Max HF:            ${formatHeartRate(stats.maxHeartRate)}`);
+  if (includeHeartRateDiffAfterOneMinute) {
+    console.log(
+      `  HF Δ (60 s): ${formatHeartRateDifference(stats.heartRateDiffAfterOneMinute)}`,
+    );
+  }
+  if (includeEfficiency) {
+    console.log(`  Efficiency:        ${formatEfficiency(stats.efficiency)}`);
+  }
+  if (includeHeartRateDiffAfterOneMinute) {
+    console.log(
+      `  HF drift:          ${formatDrift(stats.heartRateDrift, "bpm")}`,
+    );
+    console.log(`  Watt drift:        ${formatDrift(stats.powerDrift, "W")}`);
+  }
   console.log(`  Distance:          ${formatMeters(stats.totalDistance)}`);
   console.log(`  Average Speed:     ${formatSpeed(stats.avgSpeed)}`);
   console.log(`  Average Watt:      ${formatPower(stats.avgPower)}`);
@@ -298,7 +527,7 @@ function parseFit(buffer) {
     elapsedRecordField: true,
     speedUnit: "m/s",
     lengthUnit: "m",
-    temperatureUnit: "celsius"
+    temperatureUnit: "celsius",
   });
 
   return new Promise((resolve, reject) => {
@@ -329,7 +558,10 @@ async function main() {
   const sessions = Array.isArray(parsed.sessions) ? parsed.sessions : [];
   const laps = Array.isArray(parsed.laps) ? parsed.laps : [];
   const records = Array.isArray(parsed.records) ? parsed.records : [];
-  const overall = mergeStats(summarizeSessions(sessions), buildStatsFromRecords(records));
+  const overall = mergeStats(
+    summarizeSessions(sessions),
+    buildStatsFromRecords(records),
+  );
 
   if (!overall) {
     throw new Error("The FIT file did not contain any session summary data.");
@@ -350,13 +582,28 @@ async function main() {
   console.log("Sections");
 
   for (const [index, lap] of laps.entries()) {
+    const lapRecords = Array.isArray(lap.records) ? lap.records : [];
     const lapSummary = normalizeLap(lap, index);
+    const lapFallback = buildStatsFromRecords(lapRecords);
     const normalizedLap = {
       ...lapSummary,
-      ...mergeStats(lapSummary, buildStatsFromRecords(Array.isArray(lap.records) ? lap.records : []))
+      ...mergeStats(lapSummary, {
+        ...lapFallback,
+        efficiency: calculateEfficiency(
+          lapFallback?.avgPower,
+          lapFallback?.avgHeartRate,
+        ),
+        heartRateDiffAfterOneMinute:
+          heartRateDifferenceAfterOneMinute(lapRecords),
+        heartRateDrift: calculateHalfDrift(lapRecords, "heart_rate"),
+        powerDrift: calculateHalfDrift(lapRecords, "power"),
+      }),
     };
     console.log("");
-    printBlock(`  ${normalizedLap.label}`, normalizedLap);
+    printBlock(`  ${normalizedLap.label}`, normalizedLap, {
+      includeHeartRateDiffAfterOneMinute: true,
+      includeEfficiency: true,
+    });
   }
 }
 
