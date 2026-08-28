@@ -25,6 +25,67 @@ export interface RecordedSession {
   sectionStarts: number[];
 }
 
+export interface LiveSessionStats {
+  duration: number;
+  speed: number | null;
+  distance: number;
+  averagePower: number | null;
+  normalizedPower: number | null;
+  averageHeartRate: number | null;
+  maxHeartRate: number | null;
+}
+
+function average(values: number[]): number | null {
+  return values.length > 0
+    ? values.reduce((sum, value) => sum + value, 0) / values.length
+    : null;
+}
+
+function calculateNormalizedPower(records: SessionRecord[]): number | null {
+  const powers = records
+    .map((record) => record.power)
+    .filter((power): power is number => power != null);
+  if (powers.length < 30) return null;
+  let rollingSum = powers.slice(0, 30).reduce((sum, power) => sum + power, 0);
+  let fourthPowerSum = (rollingSum / 30) ** 4;
+  let windows = 1;
+  for (let index = 30; index < powers.length; index += 1) {
+    rollingSum += (powers[index] ?? 0) - (powers[index - 30] ?? 0);
+    fourthPowerSum += (rollingSum / 30) ** 4;
+    windows += 1;
+  }
+  return (fourthPowerSum / windows) ** 0.25;
+}
+
+function summarizeRecords(
+  records: SessionRecord[],
+  baseline: SessionRecord | undefined = records[0],
+): LiveSessionStats {
+  const first = records[0];
+  const last = records.at(-1);
+  const duration = first && last && baseline
+    ? Math.max(0, last.timerTime - baseline.timerTime)
+    : 0;
+  const distance = first && last && baseline
+    ? Math.max(0, last.distance - baseline.distance)
+    : 0;
+  const powers = records
+    .map((record) => record.power)
+    .filter((power): power is number => power != null);
+  const heartRates = records
+    .map((record) => record.heartRate)
+    .filter((heartRate): heartRate is number => heartRate != null);
+  return {
+    duration,
+    speed: duration > 0 ? (distance / duration) * 3.6 : null,
+    distance,
+    averagePower: average(powers),
+    normalizedPower: calculateNormalizedPower(records),
+    averageHeartRate: average(heartRates),
+    maxHeartRate: heartRates.length > 0 ? Math.max(...heartRates) : null,
+  };
+}
+
 export class SessionRecorder {
   state: SessionState = "stopped";
   private startedAt = 0;
@@ -113,6 +174,18 @@ export class SessionRecorder {
 
   get sectionNumber(): number {
     return this.sectionStarts.length;
+  }
+
+  get overallStats(): LiveSessionStats {
+    return summarizeRecords(this.records);
+  }
+
+  get currentSectionStats(): LiveSessionStats {
+    const startIndex = this.sectionStarts.at(-1) ?? 0;
+    return summarizeRecords(
+      this.records.slice(startIndex),
+      startIndex > 0 ? this.records[startIndex - 1] : this.records[0],
+    );
   }
 
   private capture(timestamp = Date.now()): void {

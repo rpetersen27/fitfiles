@@ -18,7 +18,10 @@ import {
 } from "./format.js";
 import { parseFit } from "./fit.js";
 import { createFitFile } from "./fit-writer.js";
-import { SessionRecorder } from "./session-recorder.js";
+import {
+  SessionRecorder,
+  type LiveSessionStats,
+} from "./session-recorder.js";
 import {
   TrainingBluetoothDevice,
   type TrainingMetric,
@@ -127,6 +130,16 @@ app.innerHTML = `
           <button id="session-next" class="disconnect-device-button hidden" type="button">Next lap</button>
           <button id="session-stop" class="disconnect-device-button danger hidden" type="button">Stop</button>
         </div>
+        <div class="session-stats-grid">
+          <section class="session-stats">
+            <header><h3>Whole training</h3><span id="overall-stats-duration">00:00:00</span></header>
+            <dl id="overall-session-stats" class="metrics compact-metrics"></dl>
+          </section>
+          <section class="session-stats">
+            <header><h3>Current section</h3><span id="section-stats-duration">00:00:00</span></header>
+            <dl id="section-session-stats" class="metrics compact-metrics"></dl>
+          </section>
+        </div>
         <label class="wheel-setting" for="wheel-circumference">
           <span>Wheel circumference</span>
           <span><input id="wheel-circumference" type="number" min="1000" max="3000" step="1" value="2105" /> mm</span>
@@ -180,6 +193,18 @@ const activityList = document.querySelector<HTMLElement>("#activity-list");
 const analysisActivityList = document.querySelector<HTMLElement>(
   "#analysis-activity-list",
 );
+const overallSessionStats = document.querySelector<HTMLElement>(
+  "#overall-session-stats",
+);
+const sectionSessionStats = document.querySelector<HTMLElement>(
+  "#section-session-stats",
+);
+const overallStatsDuration = document.querySelector<HTMLElement>(
+  "#overall-stats-duration",
+);
+const sectionStatsDuration = document.querySelector<HTMLElement>(
+  "#section-stats-duration",
+);
 
 if (
   !fileInputElement ||
@@ -202,7 +227,11 @@ if (
   !sessionNext ||
   !sessionStop ||
   !activityList ||
-  !analysisActivityList
+  !analysisActivityList ||
+  !overallSessionStats ||
+  !sectionSessionStats ||
+  !overallStatsDuration ||
+  !sectionStatsDuration
 ) {
   throw new Error("Missing required UI elements.");
 }
@@ -228,6 +257,10 @@ const sessionNextButton = sessionNext;
 const sessionStopButton = sessionStop;
 const activityListElement = activityList;
 const analysisActivityListElement = analysisActivityList;
+const overallSessionStatsElement = overallSessionStats;
+const sectionSessionStatsElement = sectionSessionStats;
+const overallStatsDurationLabel = overallStatsDuration;
+const sectionStatsDurationLabel = sectionStatsDuration;
 const devices = new Map<string, TrainingBluetoothDevice>();
 const deviceCapabilities = new Map<string, Set<TrainingMetric>>();
 const connectingDevices = new Set<string>();
@@ -369,6 +402,35 @@ function formatClock(seconds: number): string {
     .join(":");
 }
 
+function renderStatsBlock(
+  element: HTMLElement,
+  durationElement: HTMLElement,
+  stats: LiveSessionStats,
+): void {
+  durationElement.textContent = formatClock(stats.duration);
+  element.innerHTML = `
+    ${metricRow("Speed", formatSpeed(stats.speed != null ? stats.speed / 3.6 : null))}
+    ${metricRow("Distance", formatMeters(stats.distance))}
+    ${metricRow("Average power", formatPower(stats.averagePower))}
+    ${metricRow("Normalized power", formatPower(stats.normalizedPower))}
+    ${metricRow("Average heart rate", formatHeartRate(stats.averageHeartRate))}
+    ${metricRow("Max heart rate", formatHeartRate(stats.maxHeartRate))}
+  `;
+}
+
+function renderSessionStats(): void {
+  renderStatsBlock(
+    overallSessionStatsElement,
+    overallStatsDurationLabel,
+    sessionRecorder.overallStats,
+  );
+  renderStatsBlock(
+    sectionSessionStatsElement,
+    sectionStatsDurationLabel,
+    sessionRecorder.currentSectionStats,
+  );
+}
+
 function updateSessionControls(): void {
   const running = sessionRecorder.state === "running";
   const paused = sessionRecorder.state === "paused";
@@ -498,24 +560,29 @@ sessionStartButton.addEventListener("click", () => {
   sessionRecorder.start();
   sessionTimerLabel.textContent = "00:00:00";
   updateSessionControls();
+  renderSessionStats();
 });
 sessionPauseButton.addEventListener("click", () => {
   sessionRecorder.pause();
   updateSessionControls();
+  renderSessionStats();
 });
 sessionResumeButton.addEventListener("click", () => {
   sessionRecorder.resume();
   updateSessionControls();
+  renderSessionStats();
 });
 sessionNextButton.addEventListener("click", () => {
   sessionRecorder.nextSection();
   updateSessionControls();
+  renderSessionStats();
 });
 sessionStopButton.addEventListener("click", async () => {
   const recorded = sessionRecorder.stop();
   if (!recorded) return;
   sessionTimerLabel.textContent = formatClock(recorded.totalTimerTime);
   updateSessionControls();
+  renderSessionStats();
   const name = activityFileName(recorded.startedAt);
   busyActivities.set(recorded.id, { name, startedAt: recorded.startedAt });
   renderActivities();
@@ -545,6 +612,7 @@ sessionStopButton.addEventListener("click", async () => {
 window.setInterval(() => {
   if (sessionRecorder.state !== "stopped") {
     sessionTimerLabel.textContent = formatClock(sessionRecorder.timerSeconds);
+    renderSessionStats();
   }
 }, 250);
 
@@ -562,6 +630,7 @@ const activitiesReady = listActivities()
   .catch((error) => console.error("Could not load saved FIT files", error));
 
 updateSessionControls();
+renderSessionStats();
 
 function renderConnectedDevices(): void {
   if (devices.size === 0 && rememberedDevices.size === 0) {

@@ -436,6 +436,42 @@ h1 {
   margin: 8px 0;
 }
 
+.session-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin: 8px 0;
+}
+
+.session-stats {
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.36);
+}
+
+.session-stats header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.session-stats header span {
+  color: var(--muted);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.8rem;
+}
+
+.compact-metrics {
+  gap: 7px;
+}
+
+.compact-metrics .metric {
+  padding-bottom: 7px;
+}
+
 .disconnect-device-button.danger {
   color: #9d2d20;
   border-color: rgba(157, 45, 32, 0.25);
@@ -607,6 +643,10 @@ h1 {
   .activity-row {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .session-stats-grid {
+    grid-template-columns: 1fr;
   }
 
   .session-clock {
