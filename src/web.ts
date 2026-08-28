@@ -111,10 +111,15 @@ app.innerHTML = `
           <div class="sensor-copy"><h2>Cadence</h2><p>Live pedaling rate</p></div>
           <div class="live-reading"><strong id="cadence-reading">--</strong><span>rpm</span></div>
         </article>
-        <article class="sensor-card">
+        <article class="sensor-card power-card">
           <span class="sensor-icon" aria-hidden="true">W</span>
-          <div class="sensor-copy"><h2>Power</h2><p>Live power output</p></div>
-          <div class="live-reading"><strong id="power-reading">--</strong><span>W</span></div>
+          <div class="sensor-copy"><h2>Power</h2><p>Live / 3s / 10s output</p></div>
+          <div class="power-readings" aria-live="polite">
+            <div><strong id="power-live">--</strong><span>Live</span></div>
+            <div class="primary"><strong id="power-3s">--</strong><span>3s</span></div>
+            <div><strong id="power-10s">--</strong><span>10s</span></div>
+            <span class="power-unit">W</span>
+          </div>
         </article>
         <article class="sensor-card">
           <span class="sensor-icon" aria-hidden="true">›</span>
@@ -223,7 +228,9 @@ const heartRateReading = document.querySelector<HTMLElement>(
   "#heart-rate-reading strong",
 );
 const cadenceReading = document.querySelector<HTMLElement>("#cadence-reading");
-const powerReading = document.querySelector<HTMLElement>("#power-reading");
+const powerLiveReading = document.querySelector<HTMLElement>("#power-live");
+const power3SecondReading = document.querySelector<HTMLElement>("#power-3s");
+const power10SecondReading = document.querySelector<HTMLElement>("#power-10s");
 const speedReading = document.querySelector<HTMLElement>("#speed-reading");
 const wheelCircumference = document.querySelector<HTMLInputElement>(
   "#wheel-circumference",
@@ -292,7 +299,9 @@ if (
   !resultsElement ||
   !heartRateReading ||
   !cadenceReading ||
-  !powerReading ||
+  !powerLiveReading ||
+  !power3SecondReading ||
+  !power10SecondReading ||
   !speedReading ||
   !wheelCircumference ||
   !bluetoothButton ||
@@ -328,7 +337,9 @@ const status = statusElement;
 const results = resultsElement;
 const heartRateValue = heartRateReading;
 const cadenceValue = cadenceReading;
-const powerValue = powerReading;
+const powerLiveValue = powerLiveReading;
+const power3SecondValue = power3SecondReading;
+const power10SecondValue = power10SecondReading;
 const speedValue = speedReading;
 const wheelCircumferenceInput = wheelCircumference;
 const bluetoothConnectButton = bluetoothButton;
@@ -379,6 +390,7 @@ const deviceReadings = new Map<
   string,
   Partial<Record<TrainingMetric, { value: number; sequence: number }>>
 >();
+const powerSamplesByDevice = new Map<string, Array<{ timestamp: number; value: number }>>();
 let readingSequence = 0;
 const ACTIVE_DEVICES_KEY = "fitfiles.activeBluetoothDevices";
 const BLUETOOTH_LOG_PREFIX = "[FIT Bluetooth]";
@@ -481,16 +493,47 @@ function getLatestReadings(): TrainingReading {
   return reading;
 }
 
+function latestPowerDeviceId(): string | null {
+  let latest: { id: string; sequence: number } | null = null;
+  for (const [id, readings] of deviceReadings) {
+    const power = readings.power;
+    if (power && (!latest || power.sequence > latest.sequence)) {
+      latest = { id, sequence: power.sequence };
+    }
+  }
+  return latest?.id ?? null;
+}
+
+function rollingPowerAverage(deviceId: string, seconds: number): number | null {
+  const cutoff = Date.now() - seconds * 1000;
+  const samples = powerSamplesByDevice.get(deviceId)?.filter((sample) => sample.timestamp >= cutoff) ?? [];
+  if (samples.length === 0) return null;
+  return samples.reduce((total, sample) => total + sample.value, 0) / samples.length;
+}
+
 function renderDashboard(): void {
   const latest = getLatestReadings();
   heartRateValue.textContent = latest.heartRate?.toFixed(0) ?? "--";
   cadenceValue.textContent = latest.cadence?.toFixed(0) ?? "--";
-  powerValue.textContent = latest.power?.toFixed(0) ?? "--";
+  const powerDeviceId = latestPowerDeviceId();
+  powerLiveValue.textContent = latest.power?.toFixed(0) ?? "--";
+  power3SecondValue.textContent = powerDeviceId
+    ? rollingPowerAverage(powerDeviceId, 3)?.toFixed(0) ?? "--"
+    : "--";
+  power10SecondValue.textContent = powerDeviceId
+    ? rollingPowerAverage(powerDeviceId, 10)?.toFixed(0) ?? "--"
+    : "--";
   speedValue.textContent = latest.speed?.toFixed(1) ?? "--";
 }
 
 function storeDeviceReading(deviceId: string, reading: TrainingReading): void {
   const stored = deviceReadings.get(deviceId) ?? {};
+  if (reading.power != null) {
+    const now = Date.now();
+    const samples = powerSamplesByDevice.get(deviceId) ?? [];
+    samples.push({ timestamp: now, value: reading.power });
+    powerSamplesByDevice.set(deviceId, samples.filter((sample) => sample.timestamp >= now - 10_000));
+  }
   for (const metric of Object.keys(reading) as TrainingMetric[]) {
     const value = reading[metric];
     if (value != null) stored[metric] = { value, sequence: ++readingSequence };
@@ -685,11 +728,14 @@ function renderStatsBlock(
   targetPowerValue?: number | null,
 ): void {
   durationElement.textContent = formatClock(stats.duration);
+  const averagePower = formatPower(stats.averagePower);
+  const powerDisplay = targetPowerValue !== undefined
+    ? `${averagePower} / ${formatPower(targetPowerValue)}`
+    : averagePower;
   element.innerHTML = `
     ${metricRow("Speed", formatSpeed(stats.speed != null ? stats.speed / 3.6 : null))}
     ${metricRow("Distance", formatMeters(stats.distance))}
-    ${metricRow("Average power", formatPower(stats.averagePower))}
-    ${targetPowerValue !== undefined ? metricRow("Target power", formatPower(targetPowerValue)) : ""}
+    ${metricRow("Average power", powerDisplay)}
     ${metricRow("Normalized power", formatPower(stats.normalizedPower))}
     ${metricRow("Average heart rate", formatHeartRate(stats.averageHeartRate))}
     ${metricRow("Max heart rate", formatHeartRate(stats.maxHeartRate))}
@@ -1064,6 +1110,7 @@ function renderConnectedDevices(): void {
       deviceCapabilities.delete(device.id);
       connectingDevices.delete(device.id);
       deviceReadings.delete(device.id);
+      powerSamplesByDevice.delete(device.id);
       renderDashboard();
       renderConnectedDevices();
     });
@@ -1173,6 +1220,7 @@ async function connectTrainingDevice(
         deviceCapabilities.delete(connectedDevice.id);
         connectingDevices.delete(connectedDevice.id);
         deviceReadings.delete(connectedDevice.id);
+        powerSamplesByDevice.delete(connectedDevice.id);
         renderDashboard();
         renderConnectedDevices();
         bluetoothStatusText.textContent = `${connectedDevice.name} disconnected.`;
@@ -1208,6 +1256,7 @@ async function connectTrainingDevice(
       deviceCapabilities.delete(connectedDevice.id);
       connectingDevices.delete(connectedDevice.id);
       deviceReadings.delete(connectedDevice.id);
+      powerSamplesByDevice.delete(connectedDevice.id);
       renderDashboard();
       renderConnectedDevices();
     }

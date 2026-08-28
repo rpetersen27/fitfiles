@@ -338,6 +338,41 @@ h1 {
   font-weight: 700;
 }
 
+.power-readings {
+  display: grid;
+  grid-template-columns: repeat(3, auto) auto;
+  align-items: end;
+  gap: 10px;
+  color: var(--accent-strong);
+}
+
+.power-readings > div {
+  display: grid;
+  justify-items: center;
+  gap: 1px;
+}
+
+.power-readings strong {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 1.15rem;
+  line-height: 1;
+}
+
+.power-readings .primary strong {
+  font-size: 2rem;
+}
+
+.power-readings span {
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+.power-readings .power-unit {
+  padding-bottom: 2px;
+  font-size: 0.8rem;
+}
+
 .sensor-button {
   padding: 10px 15px;
   border: 0;
@@ -900,6 +935,11 @@ h1 {
 
   .sensor-card .live-reading {
     grid-column: 2;
+  }
+
+  .power-card .power-readings {
+    grid-column: 2 / -1;
+    justify-content: start;
   }
 
   .coming-soon {
