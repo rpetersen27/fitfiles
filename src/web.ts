@@ -1,4 +1,5 @@
 import { analyzeFitData } from "./analysis.js";
+import { deleteActivity, listActivities, saveActivity, type StoredActivity } from "./activity-store.js";
 import {
   formatDrift,
   formatDuration,
@@ -10,6 +11,8 @@ import {
   formatSpeed
 } from "./format.js";
 import { parseFit } from "./fit.js";
+import { createFitFile } from "./fit-writer.js";
+import { SessionRecorder } from "./session-recorder.js";
 import {
   TrainingBluetoothDevice,
   type TrainingMetric,
@@ -100,13 +103,32 @@ app.innerHTML = `
       </section>
       <article class="panel training-placeholder">
         <p class="eyebrow">Session setup</p>
-        <h2>Your live training setup starts here.</h2>
-        <p class="intro">Connect sensors above to build your live dashboard. Session recording comes next.</p>
+        <div class="session-heading">
+          <div>
+            <h2>Training session</h2>
+            <p id="session-state" class="status">Ready to start.</p>
+          </div>
+          <div class="session-clock"><strong id="session-timer">00:00:00</strong><span id="session-section">Section 1</span></div>
+        </div>
+        <div class="session-controls">
+          <button id="session-start" class="connect-device-button" type="button">Start</button>
+          <button id="session-pause" class="connect-device-button hidden" type="button">Pause</button>
+          <button id="session-resume" class="connect-device-button hidden" type="button">Resume</button>
+          <button id="session-next" class="disconnect-device-button hidden" type="button">Next section</button>
+          <button id="session-stop" class="disconnect-device-button danger hidden" type="button">Stop</button>
+        </div>
         <label class="wheel-setting" for="wheel-circumference">
           <span>Wheel circumference</span>
           <span><input id="wheel-circumference" type="number" min="1000" max="3000" step="1" value="2105" /> mm</span>
         </label>
       </article>
+      <section class="panel activity-history">
+        <div>
+          <p class="eyebrow">Saved sessions</p>
+          <h2>FIT files</h2>
+        </div>
+        <div id="activity-list" class="activity-list"><p class="empty-devices">No saved sessions yet.</p></div>
+      </section>
     </section>
   </main>
 `;
@@ -124,6 +146,15 @@ const wheelCircumference = document.querySelector<HTMLInputElement>("#wheel-circ
 const bluetoothButton = document.querySelector<HTMLButtonElement>("#bluetooth-connect");
 const bluetoothStatus = document.querySelector<HTMLElement>("#bluetooth-status");
 const connectedDevices = document.querySelector<HTMLElement>("#connected-devices");
+const sessionStateText = document.querySelector<HTMLElement>("#session-state");
+const sessionTimer = document.querySelector<HTMLElement>("#session-timer");
+const sessionSection = document.querySelector<HTMLElement>("#session-section");
+const sessionStart = document.querySelector<HTMLButtonElement>("#session-start");
+const sessionPause = document.querySelector<HTMLButtonElement>("#session-pause");
+const sessionResume = document.querySelector<HTMLButtonElement>("#session-resume");
+const sessionNext = document.querySelector<HTMLButtonElement>("#session-next");
+const sessionStop = document.querySelector<HTMLButtonElement>("#session-stop");
+const activityList = document.querySelector<HTMLElement>("#activity-list");
 
 if (
   !fileInputElement ||
@@ -136,7 +167,8 @@ if (
   !wheelCircumference ||
   !bluetoothButton ||
   !bluetoothStatus ||
-  !connectedDevices
+  !connectedDevices || !sessionStateText || !sessionTimer || !sessionSection ||
+  !sessionStart || !sessionPause || !sessionResume || !sessionNext || !sessionStop || !activityList
 ) {
   throw new Error("Missing required UI elements.");
 }
@@ -152,6 +184,15 @@ const wheelCircumferenceInput = wheelCircumference;
 const bluetoothConnectButton = bluetoothButton;
 const bluetoothStatusText = bluetoothStatus;
 const connectedDevicesList = connectedDevices;
+const sessionStateLabel = sessionStateText;
+const sessionTimerLabel = sessionTimer;
+const sessionSectionLabel = sessionSection;
+const sessionStartButton = sessionStart;
+const sessionPauseButton = sessionPause;
+const sessionResumeButton = sessionResume;
+const sessionNextButton = sessionNext;
+const sessionStopButton = sessionStop;
+const activityListElement = activityList;
 const devices = new Map<string, TrainingBluetoothDevice>();
 const deviceCapabilities = new Map<string, Set<TrainingMetric>>();
 const connectingDevices = new Set<string>();
@@ -215,7 +256,7 @@ const metricLabels: Record<TrainingMetric, string> = {
   speed: "Speed"
 };
 
-function renderDashboard(): void {
+function getLatestReadings(): TrainingReading {
   const latest = new Map<TrainingMetric, { value: number; sequence: number }>();
   for (const readings of deviceReadings.values()) {
     for (const metric of Object.keys(readings) as TrainingMetric[]) {
@@ -227,10 +268,24 @@ function renderDashboard(): void {
     }
   }
 
-  heartRateValue.textContent = latest.get("heartRate")?.value.toFixed(0) ?? "--";
-  cadenceValue.textContent = latest.get("cadence")?.value.toFixed(0) ?? "--";
-  powerValue.textContent = latest.get("power")?.value.toFixed(0) ?? "--";
-  speedValue.textContent = latest.get("speed")?.value.toFixed(1) ?? "--";
+  const reading: TrainingReading = {};
+  const heartRate = latest.get("heartRate");
+  const cadence = latest.get("cadence");
+  const power = latest.get("power");
+  const speed = latest.get("speed");
+  if (heartRate) reading.heartRate = heartRate.value;
+  if (cadence) reading.cadence = cadence.value;
+  if (power) reading.power = power.value;
+  if (speed) reading.speed = speed.value;
+  return reading;
+}
+
+function renderDashboard(): void {
+  const latest = getLatestReadings();
+  heartRateValue.textContent = latest.heartRate?.toFixed(0) ?? "--";
+  cadenceValue.textContent = latest.cadence?.toFixed(0) ?? "--";
+  powerValue.textContent = latest.power?.toFixed(0) ?? "--";
+  speedValue.textContent = latest.speed?.toFixed(1) ?? "--";
 }
 
 function storeDeviceReading(deviceId: string, reading: TrainingReading): void {
@@ -242,6 +297,146 @@ function storeDeviceReading(deviceId: string, reading: TrainingReading): void {
   deviceReadings.set(deviceId, stored);
   renderDashboard();
 }
+
+const sessionRecorder = new SessionRecorder(getLatestReadings);
+let savedActivities: StoredActivity[] = [];
+const busyActivities = new Map<string, { name: string; startedAt: number }>();
+
+function formatClock(seconds: number): string {
+  const total = Math.max(0, Math.floor(seconds));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const remainder = total % 60;
+  return [hours, minutes, remainder].map((value) => String(value).padStart(2, "0")).join(":");
+}
+
+function updateSessionControls(): void {
+  const running = sessionRecorder.state === "running";
+  const paused = sessionRecorder.state === "paused";
+  sessionStartButton.classList.toggle("hidden", running || paused);
+  sessionPauseButton.classList.toggle("hidden", !running);
+  sessionResumeButton.classList.toggle("hidden", !paused);
+  sessionNextButton.classList.toggle("hidden", !running && !paused);
+  sessionStopButton.classList.toggle("hidden", !running && !paused);
+  sessionStateLabel.textContent = running
+    ? "Recording live sensor data."
+    : paused
+      ? "Session paused."
+      : "Ready to start.";
+  sessionSectionLabel.textContent = `Section ${Math.max(1, sessionRecorder.sectionNumber)}`;
+}
+
+function activityFileName(startedAt: number): string {
+  return `training-${new Date(startedAt).toISOString().replace(/[:.]/g, "-")}.fit`;
+}
+
+function renderActivities(): void {
+  const entries: HTMLElement[] = [];
+  for (const busy of busyActivities.values()) {
+    const row = document.createElement("article");
+    row.className = "activity-row";
+    row.innerHTML = `<div><strong>${busy.name}</strong><p>${new Date(busy.startedAt).toLocaleString()}</p></div><span class="device-connecting"><span class="connecting-spinner" aria-hidden="true"></span>Creating FIT file…</span>`;
+    entries.push(row);
+  }
+  for (const activity of savedActivities) {
+    const row = document.createElement("article");
+    row.className = "activity-row";
+    const info = document.createElement("div");
+    const name = document.createElement("strong");
+    name.textContent = activity.name;
+    const detail = document.createElement("p");
+    detail.textContent = `${new Date(activity.startedAt).toLocaleString()} · ${formatClock(activity.duration)}`;
+    info.append(name, detail);
+    const actions = document.createElement("div");
+    actions.className = "device-actions";
+    const download = document.createElement("a");
+    download.className = "disconnect-device-button activity-download";
+    download.textContent = "Download";
+    download.download = activity.name;
+    download.addEventListener("click", () => {
+      const url = URL.createObjectURL(activity.blob);
+      download.href = url;
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    });
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "disconnect-device-button";
+    remove.textContent = "Delete";
+    remove.addEventListener("click", async () => {
+      await deleteActivity(activity.id);
+      savedActivities = savedActivities.filter((item) => item.id !== activity.id);
+      renderActivities();
+    });
+    actions.append(download, remove);
+    row.append(info, actions);
+    entries.push(row);
+  }
+  if (entries.length === 0) {
+    activityListElement.innerHTML = '<p class="empty-devices">No saved sessions yet.</p>';
+  } else {
+    activityListElement.replaceChildren(...entries);
+  }
+}
+
+sessionStartButton.addEventListener("click", () => {
+  sessionRecorder.start();
+  sessionTimerLabel.textContent = "00:00:00";
+  updateSessionControls();
+});
+sessionPauseButton.addEventListener("click", () => {
+  sessionRecorder.pause();
+  updateSessionControls();
+});
+sessionResumeButton.addEventListener("click", () => {
+  sessionRecorder.resume();
+  updateSessionControls();
+});
+sessionNextButton.addEventListener("click", () => {
+  sessionRecorder.nextSection();
+  updateSessionControls();
+});
+sessionStopButton.addEventListener("click", async () => {
+  const recorded = sessionRecorder.stop();
+  if (!recorded) return;
+  sessionTimerLabel.textContent = formatClock(recorded.totalTimerTime);
+  updateSessionControls();
+  const name = activityFileName(recorded.startedAt);
+  busyActivities.set(recorded.id, { name, startedAt: recorded.startedAt });
+  renderActivities();
+  await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+  try {
+    const activity: StoredActivity = {
+      id: recorded.id,
+      name,
+      startedAt: recorded.startedAt,
+      duration: recorded.totalTimerTime,
+      blob: createFitFile(recorded)
+    };
+    await saveActivity(activity);
+    savedActivities = [activity, ...savedActivities];
+  } catch (error) {
+    console.error("Could not create FIT file", error);
+    sessionStateLabel.textContent = "The session stopped, but its FIT file could not be saved.";
+  } finally {
+    busyActivities.delete(recorded.id);
+    renderActivities();
+  }
+});
+
+window.setInterval(() => {
+  if (sessionRecorder.state !== "stopped") {
+    sessionTimerLabel.textContent = formatClock(sessionRecorder.timerSeconds);
+  }
+}, 250);
+
+void listActivities()
+  .then((activities) => {
+    savedActivities = activities;
+    renderActivities();
+  })
+  .catch((error) => console.error("Could not load saved FIT files", error));
+
+updateSessionControls();
 
 function renderConnectedDevices(): void {
   if (devices.size === 0 && rememberedDevices.size === 0) {

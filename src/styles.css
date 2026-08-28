@@ -396,6 +396,83 @@ h1 {
   gap: 12px;
 }
 
+.session-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.session-heading h2 {
+  margin-bottom: 5px;
+}
+
+.session-clock {
+  display: grid;
+  justify-items: end;
+  color: var(--accent-strong);
+}
+
+.session-clock strong {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: clamp(1.5rem, 4vw, 2.25rem);
+}
+
+.session-clock span {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.session-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
+  margin: 8px 0;
+}
+
+.disconnect-device-button.danger {
+  color: #9d2d20;
+  border-color: rgba(157, 45, 32, 0.25);
+}
+
+.activity-history {
+  display: grid;
+  gap: 18px;
+  margin-top: 24px;
+}
+
+.activity-history h2 {
+  margin-top: 5px;
+  font-family: "Fraunces", Georgia, serif;
+}
+
+.activity-list {
+  display: grid;
+  gap: 4px;
+  border-top: 1px solid var(--line);
+}
+
+.activity-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.activity-row p {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.activity-download {
+  display: inline-block;
+  text-decoration: none;
+}
+
 .wheel-setting {
   display: flex;
   align-items: center;
@@ -519,6 +596,16 @@ h1 {
 
   .connected-devices {
     grid-column: 1;
+  }
+
+  .session-heading,
+  .activity-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .session-clock {
+    justify-items: start;
   }
 
   .sensor-card {
