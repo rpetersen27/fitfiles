@@ -70,6 +70,7 @@ function renderStats(stats: Stats, options: { includeSectionMetrics?: boolean } 
       ${metricRow("Distance", formatMeters(stats.totalDistance))}
       ${metricRow("Average speed", formatSpeed(stats.avgSpeed))}
       ${metricRow("Average watt", formatPower(stats.avgPower))}
+      ${metricRow("Normalized power", formatPower(stats.normalizedPower))}
       ${metricRow("Max watt", formatPower(stats.maxPower))}
     </dl>
   `;

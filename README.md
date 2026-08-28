@@ -18,6 +18,7 @@ Overall and per section:
 - Distance
 - Average Speed
 - Average Watt
+- Normalized Power
 - Max Watt
 
 Per section:

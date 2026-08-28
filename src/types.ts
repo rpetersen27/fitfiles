@@ -29,6 +29,7 @@ export interface FitSession {
   enhanced_avg_speed?: number;
   avg_power?: number;
   max_power?: number;
+  normalized_power?: number;
 }
 
 export interface FitLap extends FitSession {
@@ -52,6 +53,7 @@ export interface Stats {
   avgSpeed: number | null;
   avgPower: number | null;
   maxPower: number | null;
+  normalizedPower: number | null;
   heartRateDiffAfterOneMinute: number | null;
   efficiency: number | null;
   heartRateDrift: number | null;

@@ -34,6 +34,7 @@ function emptyStats(): Stats {
     avgSpeed: null,
     avgPower: null,
     maxPower: null,
+    normalizedPower: null,
     heartRateDiffAfterOneMinute: null,
     efficiency: null,
     heartRateDrift: null,
@@ -179,6 +180,90 @@ function calculateEfficiency(
   return avgPower / avgHeartRate;
 }
 
+/**
+ * Normalized power is the fourth root of the mean fourth power of the
+ * trailing 30-second rolling power averages. Timer time is used so pauses do
+ * not count toward the rolling window.
+ */
+function calculateNormalizedPower(records: FitRecord[]): number | null {
+  const intervals: Array<{ start: number; end: number; power: number }> = [];
+
+  for (let index = 0; index < records.length - 1; index += 1) {
+    const current = records[index];
+    const next = records[index + 1];
+
+    if (
+      current?.power == null ||
+      current.timer_time == null ||
+      next?.timer_time == null ||
+      Number.isNaN(current.power) ||
+      Number.isNaN(current.timer_time) ||
+      Number.isNaN(next.timer_time) ||
+      next.timer_time <= current.timer_time
+    ) {
+      continue;
+    }
+
+    intervals.push({
+      start: current.timer_time,
+      end: next.timer_time,
+      power: current.power
+    });
+  }
+
+  let fourthPowerSum = 0;
+  let totalDuration = 0;
+  let rollingEnergy = 0;
+  let coveredDuration = 0;
+  let firstIntervalIndex = 0;
+  let retainedStart = intervals[0]?.start ?? 0;
+
+  for (let index = 0; index < intervals.length; index += 1) {
+    const interval = intervals[index];
+    if (!interval) {
+      continue;
+    }
+
+    const intervalDuration = interval.end - interval.start;
+    rollingEnergy += interval.power * intervalDuration;
+    coveredDuration += intervalDuration;
+    const windowStart = interval.end - 30;
+
+    while (firstIntervalIndex <= index) {
+      const firstInterval = intervals[firstIntervalIndex];
+      if (!firstInterval) {
+        break;
+      }
+
+      const removableEnd = Math.min(windowStart, firstInterval.end);
+      const removedDuration = removableEnd - retainedStart;
+
+      if (removedDuration > 0) {
+        rollingEnergy -= firstInterval.power * removedDuration;
+        coveredDuration -= removedDuration;
+        retainedStart = removableEnd;
+      }
+
+      if (firstInterval.end > windowStart) {
+        break;
+      }
+
+      firstIntervalIndex += 1;
+      retainedStart = intervals[firstIntervalIndex]?.start ?? interval.end;
+    }
+
+    if (coveredDuration < 30 - 1e-9) {
+      continue;
+    }
+
+    const rollingAverage = rollingEnergy / coveredDuration;
+    fourthPowerSum += rollingAverage ** 4 * intervalDuration;
+    totalDuration += intervalDuration;
+  }
+
+  return totalDuration > 0 ? (fourthPowerSum / totalDuration) ** 0.25 : null;
+}
+
 function buildStatsFromRecords(records: FitRecord[]): Stats | null {
   if (records.length === 0) {
     return null;
@@ -216,7 +301,8 @@ function buildStatsFromRecords(records: FitRecord[]): Stats | null {
         ? distance / timerTime
         : averageValue(records, "speed", "timer_time"),
     avgPower: averageValue(records, "power", "timer_time"),
-    maxPower: maxValue(records, "power")
+    maxPower: maxValue(records, "power"),
+    normalizedPower: calculateNormalizedPower(records)
   };
 }
 
@@ -364,6 +450,7 @@ function mergeStats(primary: Stats | null, fallback: Stats | null): Stats | null
     avgSpeed: primary.avgSpeed ?? fallback.avgSpeed,
     avgPower: primary.avgPower ?? fallback.avgPower,
     maxPower: primary.maxPower ?? fallback.maxPower,
+    normalizedPower: primary.normalizedPower ?? fallback.normalizedPower,
     heartRateDiffAfterOneMinute:
       primary.heartRateDiffAfterOneMinute ?? fallback.heartRateDiffAfterOneMinute,
     efficiency: primary.efficiency ?? fallback.efficiency,
@@ -382,7 +469,8 @@ function normalizeSession(session: FitSession): Stats {
     totalDistance: session.total_distance ?? null,
     avgSpeed: session.avg_speed ?? session.enhanced_avg_speed ?? null,
     avgPower: session.avg_power ?? null,
-    maxPower: session.max_power ?? null
+    maxPower: session.max_power ?? null,
+    normalizedPower: session.normalized_power ?? null
   };
 }
 
@@ -402,6 +490,7 @@ function normalizeLap(lap: FitLap, index: number): LapStats {
     avgSpeed: lap.avg_speed ?? lap.enhanced_avg_speed ?? null,
     avgPower: lap.avg_power ?? null,
     maxPower: lap.max_power ?? null,
+    normalizedPower: lap.normalized_power ?? null,
     efficiency: calculateEfficiency(lap.avg_power ?? null, lap.avg_heart_rate ?? null)
   };
 }
@@ -432,7 +521,23 @@ function summarizeSessions(sessions: FitSession[]): Stats | null {
       "total_timer_time"
     ),
     avgPower: weightedAverage(sessions, "avg_power", "total_timer_time"),
-    maxPower: maxValue(sessions, "max_power")
+    maxPower: maxValue(sessions, "max_power"),
+    normalizedPower: (() => {
+      let weightedFourthPowers = 0;
+      let totalDuration = 0;
+
+      for (const session of sessions) {
+        const value = session.normalized_power;
+        const duration = session.total_timer_time;
+        if (value == null || duration == null || Number.isNaN(value) || duration <= 0) {
+          continue;
+        }
+        weightedFourthPowers += value ** 4 * duration;
+        totalDuration += duration;
+      }
+
+      return totalDuration > 0 ? (weightedFourthPowers / totalDuration) ** 0.25 : null;
+    })()
   };
 }
 

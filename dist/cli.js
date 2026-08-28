@@ -24,6 +24,7 @@ function printBlock(title, stats, options = {}) {
     console.log(`  Distance:          ${formatDistance(stats.totalDistance)}`);
     console.log(`  Average Speed:     ${formatSpeed(stats.avgSpeed)}`);
     console.log(`  Average Watt:      ${formatPower(stats.avgPower)}`);
+    console.log(`  Normalized Power:  ${formatPower(stats.normalizedPower)}`);
     console.log(`  Max Watt:          ${formatPower(stats.maxPower)}`);
 }
 async function main() {
