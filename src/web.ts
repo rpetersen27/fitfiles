@@ -20,27 +20,78 @@ if (!app) {
 }
 
 app.innerHTML = `
+  <header class="site-header">
+    <div class="nav-shell">
+      <a class="brand" href="#analysis" aria-label="FIT Files home">FIT Files</a>
+      <nav class="main-nav" aria-label="Main navigation">
+        <a class="nav-link" href="#analysis" data-view-link="analysis">Analysis</a>
+        <a class="nav-link" href="#training" data-view-link="training">Training</a>
+      </nav>
+    </div>
+  </header>
   <main class="page">
-    <section class="hero">
-      <p class="eyebrow">FIT analysis in the browser</p>
-      <h1>Upload a cycling FIT file and get section-level analysis instantly.</h1>
-      <p class="intro">
-        Everything runs client-side, so this can be hosted as a static site on GitHub Pages.
-      </p>
-      <label class="upload-card" for="fit-file">
-        <span class="upload-title">Choose a <code>.fit</code> file</span>
-        <span class="upload-subtitle">The file stays in your browser. No backend needed.</span>
-        <input id="fit-file" type="file" accept=".fit,application/octet-stream" />
-      </label>
-      <p id="status" class="status">Waiting for file.</p>
+    <section id="analysis-view" class="view" data-view="analysis">
+      <section class="hero">
+        <p class="eyebrow">FIT analysis in the browser</p>
+        <h1>Upload a cycling FIT file and get section-level analysis instantly.</h1>
+        <p class="intro">
+          Everything runs client-side, so this can be hosted as a static site on GitHub Pages.
+        </p>
+        <label class="upload-card" for="fit-file">
+          <span class="upload-title">Choose a <code>.fit</code> file</span>
+          <span class="upload-subtitle">The file stays in your browser. No backend needed.</span>
+          <input id="fit-file" type="file" accept=".fit,application/octet-stream" />
+        </label>
+        <p id="status" class="status">Waiting for file.</p>
+      </section>
+      <section id="results" class="results hidden"></section>
     </section>
-    <section id="results" class="results hidden"></section>
+    <section id="training-view" class="view hidden" data-view="training">
+      <section class="hero training-hero">
+        <p class="eyebrow">Live training</p>
+        <h1>Bring your sensors into one training view.</h1>
+        <p class="intro">
+          Connect your cycling sensors, follow live data, and record a training session.
+          Bluetooth support is the next step.
+        </p>
+      </section>
+      <section class="sensor-grid" aria-label="Supported training sensors">
+        <article class="sensor-card">
+          <span class="sensor-icon" aria-hidden="true">♥</span>
+          <div><h2>Heart rate</h2><p>Track your effort and training zones.</p></div>
+          <span class="coming-soon">Coming next</span>
+        </article>
+        <article class="sensor-card">
+          <span class="sensor-icon" aria-hidden="true">↻</span>
+          <div><h2>Cadence</h2><p>See your live pedaling rate.</p></div>
+          <span class="coming-soon">Coming next</span>
+        </article>
+        <article class="sensor-card">
+          <span class="sensor-icon" aria-hidden="true">W</span>
+          <div><h2>Power meter</h2><p>Capture live power from your wattmeter.</p></div>
+          <span class="coming-soon">Coming next</span>
+        </article>
+        <article class="sensor-card">
+          <span class="sensor-icon" aria-hidden="true">›</span>
+          <div><h2>Speed</h2><p>Measure speed and distance as you ride.</p></div>
+          <span class="coming-soon">Coming next</span>
+        </article>
+      </section>
+      <article class="panel training-placeholder">
+        <p class="eyebrow">Session setup</p>
+        <h2>Bluetooth connections will live here.</h2>
+        <p class="intro">Soon you’ll be able to pair sensors and start collecting training data from this page.</p>
+        <button type="button" disabled>Connect sensors</button>
+      </article>
+    </section>
   </main>
 `;
 
 const fileInputElement = document.querySelector<HTMLInputElement>("#fit-file");
 const statusElement = document.querySelector<HTMLParagraphElement>("#status");
 const resultsElement = document.querySelector<HTMLElement>("#results");
+const views = Array.from(document.querySelectorAll<HTMLElement>("[data-view]"));
+const viewLinks = Array.from(document.querySelectorAll<HTMLAnchorElement>("[data-view-link]"));
 
 if (!fileInputElement || !statusElement || !resultsElement) {
   throw new Error("Missing required UI elements.");
@@ -49,6 +100,31 @@ if (!fileInputElement || !statusElement || !resultsElement) {
 const fileInput = fileInputElement;
 const status = statusElement;
 const results = resultsElement;
+
+type ViewName = "analysis" | "training";
+
+function showView(viewName: ViewName): void {
+  for (const view of views) {
+    view.classList.toggle("hidden", view.dataset.view !== viewName);
+  }
+
+  for (const link of viewLinks) {
+    const isActive = link.dataset.viewLink === viewName;
+    link.classList.toggle("active", isActive);
+    if (isActive) {
+      link.setAttribute("aria-current", "page");
+    } else {
+      link.removeAttribute("aria-current");
+    }
+  }
+}
+
+function viewFromHash(): ViewName {
+  return window.location.hash === "#training" ? "training" : "analysis";
+}
+
+window.addEventListener("hashchange", () => showView(viewFromHash()));
+showView(viewFromHash());
 
 function metricRow(label: string, value: string): string {
   return `<div class="metric"><dt>${label}</dt><dd>${value}</dd></div>`;
