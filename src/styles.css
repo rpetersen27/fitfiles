@@ -166,6 +166,134 @@ h1 {
   margin-bottom: 24px;
 }
 
+.device-setup {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 20px;
+  margin-bottom: 24px;
+}
+
+.device-setup h2 {
+  margin: 5px 0 6px;
+  font-family: "Fraunces", Georgia, serif;
+}
+
+.connect-device-button {
+  padding: 13px 18px;
+  border: 0;
+  border-radius: 999px;
+  color: white;
+  background: var(--accent);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.connect-device-button:hover:not(:disabled) {
+  background: var(--accent-strong);
+}
+
+.connect-device-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.connected-devices {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 10px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+
+.empty-devices {
+  color: var(--muted);
+}
+
+.connected-device {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 13px 0;
+}
+
+.capability-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 7px;
+}
+
+.capability-tag {
+  padding: 4px 8px;
+  border-radius: 999px;
+  color: var(--accent-strong);
+  background: rgba(14, 124, 102, 0.1);
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.capability-tag.waiting {
+  color: var(--muted);
+  background: var(--line);
+}
+
+.device-connecting {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--accent-strong);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.connecting-spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(14, 124, 102, 0.22);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.disconnect-device-button {
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  background: transparent;
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.device-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.disconnect-device-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .connecting-spinner {
+    animation: none;
+  }
+}
+
 .sensor-card {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
@@ -175,6 +303,60 @@ h1 {
   border: 1px solid var(--line);
   border-radius: 24px;
   background: var(--paper);
+}
+
+.heart-rate-card,
+.sensor-card {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
+.sensor-copy {
+  min-width: 0;
+}
+
+.live-reading {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  min-width: 86px;
+  color: var(--accent-strong);
+}
+
+.live-reading strong {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 2rem;
+}
+
+.live-reading span {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.sensor-button {
+  padding: 10px 15px;
+  border: 0;
+  border-radius: 999px;
+  color: white;
+  background: var(--accent);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.sensor-button:hover:not(:disabled) {
+  background: var(--accent-strong);
+}
+
+.sensor-button.secondary {
+  border: 1px solid var(--line);
+  color: var(--muted);
+  background: transparent;
+}
+
+.sensor-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
 }
 
 .sensor-card h2,
@@ -212,6 +394,27 @@ h1 {
 .training-placeholder {
   display: grid;
   gap: 12px;
+}
+
+.wheel-setting {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  max-width: 420px;
+  gap: 16px;
+  margin-top: 8px;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.wheel-setting input {
+  width: 88px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: var(--ink);
+  background: white;
+  font: inherit;
 }
 
 .training-placeholder button {
@@ -306,8 +509,29 @@ h1 {
     grid-template-columns: 1fr;
   }
 
+  .device-setup {
+    grid-template-columns: 1fr;
+  }
+
+  .connect-device-button {
+    width: 100%;
+  }
+
+  .connected-devices {
+    grid-column: 1;
+  }
+
   .sensor-card {
     grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .heart-rate-card,
+  .sensor-card {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
+  .sensor-card .live-reading {
+    grid-column: 2;
   }
 
   .coming-soon {
