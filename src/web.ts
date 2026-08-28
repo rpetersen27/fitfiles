@@ -1,5 +1,11 @@
 import { analyzeFitData } from "./analysis.js";
-import { deleteActivity, listActivities, saveActivity, type StoredActivity } from "./activity-store.js";
+import {
+  deleteActivity,
+  listActivities,
+  saveActivity,
+  saveActivityIfNew,
+  type StoredActivity,
+} from "./activity-store.js";
 import {
   formatDrift,
   formatDuration,
@@ -8,7 +14,7 @@ import {
   formatHeartRateDifference,
   formatMeters,
   formatPower,
-  formatSpeed
+  formatSpeed,
 } from "./format.js";
 import { parseFit } from "./fit.js";
 import { createFitFile } from "./fit-writer.js";
@@ -16,7 +22,7 @@ import { SessionRecorder } from "./session-recorder.js";
 import {
   TrainingBluetoothDevice,
   type TrainingMetric,
-  type TrainingReading
+  type TrainingReading,
 } from "./training-device.js";
 import "./styles.css";
 import type { AnalysisResult, Stats } from "./types.js";
@@ -53,6 +59,10 @@ app.innerHTML = `
         <p id="status" class="status">Waiting for file.</p>
       </section>
       <section id="results" class="results hidden"></section>
+      <section class="panel activity-history analysis-history">
+        <div><p class="eyebrow">Saved files</p><h2>FIT file library</h2></div>
+        <div id="analysis-activity-list" class="activity-list"><p class="empty-devices">No saved FIT files yet.</p></div>
+      </section>
     </section>
     <section id="training-view" class="view hidden" data-view="training">
       <section class="hero training-hero">
@@ -114,7 +124,7 @@ app.innerHTML = `
           <button id="session-start" class="connect-device-button" type="button">Start</button>
           <button id="session-pause" class="connect-device-button hidden" type="button">Pause</button>
           <button id="session-resume" class="connect-device-button hidden" type="button">Resume</button>
-          <button id="session-next" class="disconnect-device-button hidden" type="button">Next section</button>
+          <button id="session-next" class="disconnect-device-button hidden" type="button">Next lap</button>
           <button id="session-stop" class="disconnect-device-button danger hidden" type="button">Stop</button>
         </div>
         <label class="wheel-setting" for="wheel-circumference">
@@ -137,24 +147,39 @@ const fileInputElement = document.querySelector<HTMLInputElement>("#fit-file");
 const statusElement = document.querySelector<HTMLParagraphElement>("#status");
 const resultsElement = document.querySelector<HTMLElement>("#results");
 const views = Array.from(document.querySelectorAll<HTMLElement>("[data-view]"));
-const viewLinks = Array.from(document.querySelectorAll<HTMLAnchorElement>("[data-view-link]"));
-const heartRateReading = document.querySelector<HTMLElement>("#heart-rate-reading strong");
+const viewLinks = Array.from(
+  document.querySelectorAll<HTMLAnchorElement>("[data-view-link]"),
+);
+const heartRateReading = document.querySelector<HTMLElement>(
+  "#heart-rate-reading strong",
+);
 const cadenceReading = document.querySelector<HTMLElement>("#cadence-reading");
 const powerReading = document.querySelector<HTMLElement>("#power-reading");
 const speedReading = document.querySelector<HTMLElement>("#speed-reading");
-const wheelCircumference = document.querySelector<HTMLInputElement>("#wheel-circumference");
-const bluetoothButton = document.querySelector<HTMLButtonElement>("#bluetooth-connect");
-const bluetoothStatus = document.querySelector<HTMLElement>("#bluetooth-status");
-const connectedDevices = document.querySelector<HTMLElement>("#connected-devices");
+const wheelCircumference = document.querySelector<HTMLInputElement>(
+  "#wheel-circumference",
+);
+const bluetoothButton =
+  document.querySelector<HTMLButtonElement>("#bluetooth-connect");
+const bluetoothStatus =
+  document.querySelector<HTMLElement>("#bluetooth-status");
+const connectedDevices =
+  document.querySelector<HTMLElement>("#connected-devices");
 const sessionStateText = document.querySelector<HTMLElement>("#session-state");
 const sessionTimer = document.querySelector<HTMLElement>("#session-timer");
 const sessionSection = document.querySelector<HTMLElement>("#session-section");
-const sessionStart = document.querySelector<HTMLButtonElement>("#session-start");
-const sessionPause = document.querySelector<HTMLButtonElement>("#session-pause");
-const sessionResume = document.querySelector<HTMLButtonElement>("#session-resume");
+const sessionStart =
+  document.querySelector<HTMLButtonElement>("#session-start");
+const sessionPause =
+  document.querySelector<HTMLButtonElement>("#session-pause");
+const sessionResume =
+  document.querySelector<HTMLButtonElement>("#session-resume");
 const sessionNext = document.querySelector<HTMLButtonElement>("#session-next");
 const sessionStop = document.querySelector<HTMLButtonElement>("#session-stop");
 const activityList = document.querySelector<HTMLElement>("#activity-list");
+const analysisActivityList = document.querySelector<HTMLElement>(
+  "#analysis-activity-list",
+);
 
 if (
   !fileInputElement ||
@@ -167,8 +192,17 @@ if (
   !wheelCircumference ||
   !bluetoothButton ||
   !bluetoothStatus ||
-  !connectedDevices || !sessionStateText || !sessionTimer || !sessionSection ||
-  !sessionStart || !sessionPause || !sessionResume || !sessionNext || !sessionStop || !activityList
+  !connectedDevices ||
+  !sessionStateText ||
+  !sessionTimer ||
+  !sessionSection ||
+  !sessionStart ||
+  !sessionPause ||
+  !sessionResume ||
+  !sessionNext ||
+  !sessionStop ||
+  !activityList ||
+  !analysisActivityList
 ) {
   throw new Error("Missing required UI elements.");
 }
@@ -193,6 +227,7 @@ const sessionResumeButton = sessionResume;
 const sessionNextButton = sessionNext;
 const sessionStopButton = sessionStop;
 const activityListElement = activityList;
+const analysisActivityListElement = analysisActivityList;
 const devices = new Map<string, TrainingBluetoothDevice>();
 const deviceCapabilities = new Map<string, Set<TrainingMetric>>();
 const connectingDevices = new Set<string>();
@@ -215,19 +250,28 @@ function loadRememberedDevices(): Map<string, RememberedDevice> {
     const remembered = new Map<string, RememberedDevice>();
     if (Array.isArray(stored)) {
       for (const item of stored) {
-        if (typeof item === "string") remembered.set(item, { id: item, name: null });
+        if (typeof item === "string")
+          remembered.set(item, { id: item, name: null });
         else if (item && typeof item.id === "string") {
           remembered.set(item.id, {
             id: item.id,
-            name: typeof item.name === "string" ? item.name : null
+            name: typeof item.name === "string" ? item.name : null,
           });
         }
       }
     }
-    console.info(BLUETOOTH_LOG_PREFIX, "Loaded remembered devices", Array.from(remembered.values()));
+    console.info(
+      BLUETOOTH_LOG_PREFIX,
+      "Loaded remembered devices",
+      Array.from(remembered.values()),
+    );
     return remembered;
   } catch (error) {
-    console.error(BLUETOOTH_LOG_PREFIX, "Could not read remembered devices", error);
+    console.error(
+      BLUETOOTH_LOG_PREFIX,
+      "Could not read remembered devices",
+      error,
+    );
     return new Map();
   }
 }
@@ -236,24 +280,37 @@ const rememberedDevices = loadRememberedDevices();
 
 function saveRememberedDevices(): void {
   try {
-    localStorage.setItem(ACTIVE_DEVICES_KEY, JSON.stringify(Array.from(rememberedDevices.values())));
-    console.info(BLUETOOTH_LOG_PREFIX, "Saved remembered devices", Array.from(rememberedDevices.values()));
+    localStorage.setItem(
+      ACTIVE_DEVICES_KEY,
+      JSON.stringify(Array.from(rememberedDevices.values())),
+    );
+    console.info(
+      BLUETOOTH_LOG_PREFIX,
+      "Saved remembered devices",
+      Array.from(rememberedDevices.values()),
+    );
   } catch (error) {
-    console.error(BLUETOOTH_LOG_PREFIX, "Could not save active device IDs", error);
+    console.error(
+      BLUETOOTH_LOG_PREFIX,
+      "Could not save active device IDs",
+      error,
+    );
     // Bluetooth still works when storage is unavailable; only auto-reconnect is lost.
   }
 }
 
 function getWheelCircumferenceMeters(): number {
   const millimeters = wheelCircumferenceInput.valueAsNumber;
-  return Number.isFinite(millimeters) && millimeters > 0 ? millimeters / 1000 : 2.105;
+  return Number.isFinite(millimeters) && millimeters > 0
+    ? millimeters / 1000
+    : 2.105;
 }
 
 const metricLabels: Record<TrainingMetric, string> = {
   heartRate: "Heart rate",
   cadence: "Cadence",
   power: "Power",
-  speed: "Speed"
+  speed: "Speed",
 };
 
 function getLatestReadings(): TrainingReading {
@@ -307,7 +364,9 @@ function formatClock(seconds: number): string {
   const hours = Math.floor(total / 3600);
   const minutes = Math.floor((total % 3600) / 60);
   const remainder = total % 60;
-  return [hours, minutes, remainder].map((value) => String(value).padStart(2, "0")).join(":");
+  return [hours, minutes, remainder]
+    .map((value) => String(value).padStart(2, "0"))
+    .join(":");
 }
 
 function updateSessionControls(): void {
@@ -330,7 +389,30 @@ function activityFileName(startedAt: number): string {
   return `training-${new Date(startedAt).toISOString().replace(/[:.]/g, "-")}.fit`;
 }
 
-function renderActivities(): void {
+async function fingerprintBlob(blob: Blob): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    await blob.arrayBuffer(),
+  );
+  return Array.from(new Uint8Array(digest), (byte) =>
+    byte.toString(16).padStart(2, "0"),
+  ).join("");
+}
+
+async function analyzeStoredActivity(activity: StoredActivity): Promise<void> {
+  status.textContent = `Reading ${activity.name}…`;
+  try {
+    const parsed = await parseFit(await activity.blob.arrayBuffer());
+    renderAnalysis(analyzeFitData(parsed), activity.name);
+    status.textContent = `Loaded ${activity.name}`;
+    window.location.hash = "#analysis";
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    status.textContent = `Error: ${message}`;
+  }
+}
+
+function createActivityRows(includeAnalyze: boolean): HTMLElement[] {
   const entries: HTMLElement[] = [];
   for (const busy of busyActivities.values()) {
     const row = document.createElement("article");
@@ -349,6 +431,17 @@ function renderActivities(): void {
     info.append(name, detail);
     const actions = document.createElement("div");
     actions.className = "device-actions";
+    if (includeAnalyze) {
+      const analyze = document.createElement("button");
+      analyze.type = "button";
+      analyze.className = "connect-device-button compact";
+      analyze.textContent = "Analyze";
+      analyze.addEventListener(
+        "click",
+        () => void analyzeStoredActivity(activity),
+      );
+      actions.append(analyze);
+    }
     const download = document.createElement("a");
     download.className = "disconnect-device-button activity-download";
     download.textContent = "Download";
@@ -364,18 +457,41 @@ function renderActivities(): void {
     remove.textContent = "Delete";
     remove.addEventListener("click", async () => {
       await deleteActivity(activity.id);
-      savedActivities = savedActivities.filter((item) => item.id !== activity.id);
+      savedActivities = savedActivities.filter(
+        (item) => item.id !== activity.id,
+      );
       renderActivities();
     });
     actions.append(download, remove);
     row.append(info, actions);
     entries.push(row);
   }
-  if (entries.length === 0) {
-    activityListElement.innerHTML = '<p class="empty-devices">No saved sessions yet.</p>';
-  } else {
-    activityListElement.replaceChildren(...entries);
-  }
+  return entries;
+}
+
+function renderActivities(): void {
+  const trainingRows = createActivityRows(false);
+  const analysisRows = createActivityRows(true);
+  activityListElement.replaceChildren(
+    ...(trainingRows.length > 0
+      ? trainingRows
+      : [
+          Object.assign(document.createElement("p"), {
+            className: "empty-devices",
+            textContent: "No saved sessions yet.",
+          }),
+        ]),
+  );
+  analysisActivityListElement.replaceChildren(
+    ...(analysisRows.length > 0
+      ? analysisRows
+      : [
+          Object.assign(document.createElement("p"), {
+            className: "empty-devices",
+            textContent: "No saved FIT files yet.",
+          }),
+        ]),
+  );
 }
 
 sessionStartButton.addEventListener("click", () => {
@@ -405,18 +521,21 @@ sessionStopButton.addEventListener("click", async () => {
   renderActivities();
   await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
   try {
+    const blob = createFitFile(recorded);
     const activity: StoredActivity = {
       id: recorded.id,
       name,
       startedAt: recorded.startedAt,
       duration: recorded.totalTimerTime,
-      blob: createFitFile(recorded)
+      blob,
+      fingerprint: await fingerprintBlob(blob),
     };
     await saveActivity(activity);
     savedActivities = [activity, ...savedActivities];
   } catch (error) {
     console.error("Could not create FIT file", error);
-    sessionStateLabel.textContent = "The session stopped, but its FIT file could not be saved.";
+    sessionStateLabel.textContent =
+      "The session stopped, but its FIT file could not be saved.";
   } finally {
     busyActivities.delete(recorded.id);
     renderActivities();
@@ -429,8 +548,14 @@ window.setInterval(() => {
   }
 }, 250);
 
-void listActivities()
-  .then((activities) => {
+const activitiesReady = listActivities()
+  .then(async (activities) => {
+    for (const activity of activities) {
+      if (!activity.fingerprint) {
+        activity.fingerprint = await fingerprintBlob(activity.blob);
+        await saveActivity(activity);
+      }
+    }
     savedActivities = activities;
     renderActivities();
   })
@@ -440,57 +565,60 @@ updateSessionControls();
 
 function renderConnectedDevices(): void {
   if (devices.size === 0 && rememberedDevices.size === 0) {
-    connectedDevicesList.innerHTML = '<p class="empty-devices">No devices connected.</p>';
+    connectedDevicesList.innerHTML =
+      '<p class="empty-devices">No devices connected.</p>';
     return;
   }
 
   const rows = Array.from(devices.values(), (device) => {
-      const row = document.createElement("article");
-      row.className = "connected-device";
-      const info = document.createElement("div");
-      const name = document.createElement("strong");
-      name.textContent = device.name;
-      const tags = document.createElement("div");
-      tags.className = "capability-tags";
-      const capabilities = deviceCapabilities.get(device.id) ?? new Set<TrainingMetric>();
-      if (connectingDevices.has(device.id)) {
-        const connecting = document.createElement("span");
-        connecting.className = "device-connecting";
-        connecting.innerHTML = '<span class="connecting-spinner" aria-hidden="true"></span>Connecting…';
-        tags.append(connecting);
-      } else if (capabilities.size === 0) {
-        const waiting = document.createElement("span");
-        waiting.className = "capability-tag waiting";
-        waiting.textContent = "Waiting for data";
-        tags.append(waiting);
-      } else {
-        for (const capability of capabilities) {
-          const tag = document.createElement("span");
-          tag.className = "capability-tag";
-          tag.textContent = metricLabels[capability];
-          tags.append(tag);
-        }
+    const row = document.createElement("article");
+    row.className = "connected-device";
+    const info = document.createElement("div");
+    const name = document.createElement("strong");
+    name.textContent = device.name;
+    const tags = document.createElement("div");
+    tags.className = "capability-tags";
+    const capabilities =
+      deviceCapabilities.get(device.id) ?? new Set<TrainingMetric>();
+    if (connectingDevices.has(device.id)) {
+      const connecting = document.createElement("span");
+      connecting.className = "device-connecting";
+      connecting.innerHTML =
+        '<span class="connecting-spinner" aria-hidden="true"></span>Connecting…';
+      tags.append(connecting);
+    } else if (capabilities.size === 0) {
+      const waiting = document.createElement("span");
+      waiting.className = "capability-tag waiting";
+      waiting.textContent = "Waiting for data";
+      tags.append(waiting);
+    } else {
+      for (const capability of capabilities) {
+        const tag = document.createElement("span");
+        tag.className = "capability-tag";
+        tag.textContent = metricLabels[capability];
+        tags.append(tag);
       }
-      info.append(name, tags);
-      const disconnect = document.createElement("button");
-      disconnect.type = "button";
-      disconnect.className = "disconnect-device-button";
-      disconnect.textContent = "Disconnect";
-      disconnect.disabled = connectingDevices.has(device.id);
-      disconnect.addEventListener("click", () => {
-        device.disconnect();
-        rememberedDevices.delete(device.id);
-        saveRememberedDevices();
-        devices.delete(device.id);
-        deviceCapabilities.delete(device.id);
-        connectingDevices.delete(device.id);
-        deviceReadings.delete(device.id);
-        renderDashboard();
-        renderConnectedDevices();
-      });
-      row.append(info, disconnect);
-      return row;
+    }
+    info.append(name, tags);
+    const disconnect = document.createElement("button");
+    disconnect.type = "button";
+    disconnect.className = "disconnect-device-button";
+    disconnect.textContent = "Disconnect";
+    disconnect.disabled = connectingDevices.has(device.id);
+    disconnect.addEventListener("click", () => {
+      device.disconnect();
+      rememberedDevices.delete(device.id);
+      saveRememberedDevices();
+      devices.delete(device.id);
+      deviceCapabilities.delete(device.id);
+      connectingDevices.delete(device.id);
+      deviceReadings.delete(device.id);
+      renderDashboard();
+      renderConnectedDevices();
     });
+    row.append(info, disconnect);
+    return row;
+  });
 
   for (const remembered of rememberedDevices.values()) {
     if (devices.has(remembered.id)) continue;
@@ -501,7 +629,8 @@ function renderConnectedDevices(): void {
     name.textContent = remembered.name ?? "Remembered Bluetooth sensor";
     const state = document.createElement("div");
     state.className = "capability-tags";
-    state.innerHTML = '<span class="capability-tag waiting">Disconnected</span>';
+    state.innerHTML =
+      '<span class="capability-tag waiting">Disconnected</span>';
     info.append(name, state);
     const reconnect = document.createElement("button");
     reconnect.type = "button";
@@ -515,10 +644,13 @@ function renderConnectedDevices(): void {
             ? TrainingBluetoothDevice.selectNamedAndConnect(
                 remembered.name,
                 callbacks,
-                getWheelCircumferenceMeters
+                getWheelCircumferenceMeters,
               )
-            : TrainingBluetoothDevice.selectAndConnect(callbacks, getWheelCircumferenceMeters),
-        true
+            : TrainingBluetoothDevice.selectAndConnect(
+                callbacks,
+                getWheelCircumferenceMeters,
+              ),
+        true,
       );
       if (reconnected && reconnected.id !== remembered.id) {
         rememberedDevices.delete(remembered.id);
@@ -555,56 +687,58 @@ if (!window.isSecureContext || !navigator.bluetooth) {
 
 async function connectTrainingDevice(
   connect: (
-    callbacks: Parameters<typeof TrainingBluetoothDevice.selectAndConnect>[0]
+    callbacks: Parameters<typeof TrainingBluetoothDevice.selectAndConnect>[0],
   ) => Promise<TrainingBluetoothDevice>,
-  rememberOnSuccess: boolean
+  rememberOnSuccess: boolean,
 ): Promise<TrainingBluetoothDevice | null> {
   let connectedDevice: TrainingBluetoothDevice | null = null;
   let discoveredCapabilities = new Set<TrainingMetric>();
 
   try {
     connectedDevice = await connect({
-        onConnecting: (device) => {
-          connectedDevice = device;
-          const previousDevice = devices.get(device.id);
-          if (previousDevice && previousDevice !== device) previousDevice.disconnect();
-          devices.set(device.id, device);
-          deviceCapabilities.set(device.id, new Set());
-          connectingDevices.add(device.id);
-          renderConnectedDevices();
-          bluetoothStatusText.textContent = `Connecting to ${device.name}…`;
-        },
-        onReading: (reading) => {
-          if (connectedDevice) storeDeviceReading(connectedDevice.id, reading);
-        },
-        onCapabilitiesChanged: (capabilities) => {
-          discoveredCapabilities = new Set(capabilities);
-          if (!connectedDevice) return;
-          deviceCapabilities.set(connectedDevice.id, discoveredCapabilities);
-          renderConnectedDevices();
-        },
-        onDisconnected: () => {
-          if (!connectedDevice) return;
-          devices.delete(connectedDevice.id);
-          deviceCapabilities.delete(connectedDevice.id);
-          connectingDevices.delete(connectedDevice.id);
-          deviceReadings.delete(connectedDevice.id);
-          renderDashboard();
-          renderConnectedDevices();
-          bluetoothStatusText.textContent = `${connectedDevice.name} disconnected.`;
-        }
-      });
+      onConnecting: (device) => {
+        connectedDevice = device;
+        const previousDevice = devices.get(device.id);
+        if (previousDevice && previousDevice !== device)
+          previousDevice.disconnect();
+        devices.set(device.id, device);
+        deviceCapabilities.set(device.id, new Set());
+        connectingDevices.add(device.id);
+        renderConnectedDevices();
+        bluetoothStatusText.textContent = `Connecting to ${device.name}…`;
+      },
+      onReading: (reading) => {
+        if (connectedDevice) storeDeviceReading(connectedDevice.id, reading);
+      },
+      onCapabilitiesChanged: (capabilities) => {
+        discoveredCapabilities = new Set(capabilities);
+        if (!connectedDevice) return;
+        deviceCapabilities.set(connectedDevice.id, discoveredCapabilities);
+        renderConnectedDevices();
+      },
+      onDisconnected: () => {
+        if (!connectedDevice) return;
+        devices.delete(connectedDevice.id);
+        deviceCapabilities.delete(connectedDevice.id);
+        connectingDevices.delete(connectedDevice.id);
+        deviceReadings.delete(connectedDevice.id);
+        renderDashboard();
+        renderConnectedDevices();
+        bluetoothStatusText.textContent = `${connectedDevice.name} disconnected.`;
+      },
+    });
 
     const existing = devices.get(connectedDevice.id);
     if (existing && existing !== connectedDevice) existing.disconnect();
     devices.set(connectedDevice.id, connectedDevice);
     connectingDevices.delete(connectedDevice.id);
-    for (const metric of connectedDevice.availableMetrics) discoveredCapabilities.add(metric);
+    for (const metric of connectedDevice.availableMetrics)
+      discoveredCapabilities.add(metric);
     deviceCapabilities.set(connectedDevice.id, discoveredCapabilities);
     if (rememberOnSuccess) {
       rememberedDevices.set(connectedDevice.id, {
         id: connectedDevice.id,
-        name: connectedDevice.advertisedName
+        name: connectedDevice.advertisedName,
       });
       saveRememberedDevices();
     }
@@ -613,7 +747,7 @@ async function connectTrainingDevice(
     console.info(BLUETOOTH_LOG_PREFIX, "Connection registered in UI", {
       id: connectedDevice.id,
       name: connectedDevice.name,
-      remembered: rememberOnSuccess
+      remembered: rememberOnSuccess,
     });
     return connectedDevice;
   } catch (error) {
@@ -626,7 +760,8 @@ async function connectTrainingDevice(
       renderDashboard();
       renderConnectedDevices();
     }
-    const cancelled = error instanceof DOMException && error.name === "NotFoundError";
+    const cancelled =
+      error instanceof DOMException && error.name === "NotFoundError";
     const message = error instanceof Error ? error.message : String(error);
     bluetoothStatusText.textContent = cancelled
       ? "Connection cancelled."
@@ -640,8 +775,11 @@ bluetoothConnectButton.addEventListener("click", async () => {
   bluetoothStatusText.textContent = "Choose a Bluetooth training sensor…";
   await connectTrainingDevice(
     (callbacks) =>
-      TrainingBluetoothDevice.selectAndConnect(callbacks, getWheelCircumferenceMeters),
-    true
+      TrainingBluetoothDevice.selectAndConnect(
+        callbacks,
+        getWheelCircumferenceMeters,
+      ),
+    true,
   );
   bluetoothConnectButton.disabled = false;
 });
@@ -652,14 +790,20 @@ async function reconnectActiveDevices(): Promise<void> {
     secureContext: window.isSecureContext,
     bluetoothAvailable: Boolean(bluetooth),
     getDevicesAvailable: Boolean(bluetooth?.getDevices),
-    activeDeviceIds: Array.from(rememberedDevices.keys())
+    activeDeviceIds: Array.from(rememberedDevices.keys()),
   });
   if (!bluetooth?.getDevices) {
-    console.warn(BLUETOOTH_LOG_PREFIX, "Auto-reconnect unavailable: getDevices() is not supported");
+    console.warn(
+      BLUETOOTH_LOG_PREFIX,
+      "Auto-reconnect unavailable: getDevices() is not supported",
+    );
     return;
   }
   if (rememberedDevices.size === 0) {
-    console.info(BLUETOOTH_LOG_PREFIX, "Auto-reconnect skipped: no active devices stored");
+    console.info(
+      BLUETOOTH_LOG_PREFIX,
+      "Auto-reconnect skipped: no active devices stored",
+    );
     return;
   }
 
@@ -668,31 +812,37 @@ async function reconnectActiveDevices(): Promise<void> {
     console.info(
       BLUETOOTH_LOG_PREFIX,
       "Previously authorized devices returned by browser",
-      authorizedDevices.map((device) => ({ id: device.id, name: device.name }))
+      authorizedDevices.map((device) => ({ id: device.id, name: device.name })),
     );
-    const reconnectable = authorizedDevices.filter((device) => rememberedDevices.has(device.id));
+    const reconnectable = authorizedDevices.filter((device) =>
+      rememberedDevices.has(device.id),
+    );
     console.info(
       BLUETOOTH_LOG_PREFIX,
       "Devices selected for auto-reconnect",
-      reconnectable.map((device) => ({ id: device.id, name: device.name }))
+      reconnectable.map((device) => ({ id: device.id, name: device.name })),
     );
     for (const device of reconnectable) {
       console.info(BLUETOOTH_LOG_PREFIX, "Attempting automatic connection", {
         id: device.id,
-        name: device.name
+        name: device.name,
       });
       await connectTrainingDevice(
         (callbacks) =>
           TrainingBluetoothDevice.connectAuthorized(
             device,
             callbacks,
-            getWheelCircumferenceMeters
+            getWheelCircumferenceMeters,
           ),
-        false
+        false,
       );
     }
   } catch (error) {
-    console.error(BLUETOOTH_LOG_PREFIX, "Could not restore Bluetooth devices", error);
+    console.error(
+      BLUETOOTH_LOG_PREFIX,
+      "Could not restore Bluetooth devices",
+      error,
+    );
     const message = error instanceof Error ? error.message : String(error);
     bluetoothStatusText.textContent = `Could not restore Bluetooth devices: ${message}`;
   }
@@ -730,7 +880,10 @@ function metricRow(label: string, value: string): string {
   return `<div class="metric"><dt>${label}</dt><dd>${value}</dd></div>`;
 }
 
-function renderStats(stats: Stats, options: { includeSectionMetrics?: boolean } = {}): string {
+function renderStats(
+  stats: Stats,
+  options: { includeSectionMetrics?: boolean } = {},
+): string {
   const { includeSectionMetrics = false } = options;
 
   return `
@@ -762,7 +915,7 @@ function renderAnalysis(analysis: AnalysisResult, fileName: string): void {
           </header>
           ${renderStats(section, { includeSectionMetrics: true })}
         </article>
-      `
+      `,
     )
     .join("");
 
@@ -795,7 +948,23 @@ async function handleFile(file: File): Promise<void> {
   const analysis = analyzeFitData(parsed);
 
   renderAnalysis(analysis, file.name);
-  status.textContent = `Loaded ${file.name}`;
+  await activitiesReady;
+  const activity: StoredActivity = {
+    id: crypto.randomUUID(),
+    name: file.name,
+    startedAt: file.lastModified || Date.now(),
+    duration: analysis.overall.totalTimerTime ?? 0,
+    blob: file,
+    fingerprint: await fingerprintBlob(file),
+  };
+  const added = await saveActivityIfNew(activity);
+  if (added) {
+    savedActivities = await listActivities();
+    renderActivities();
+  }
+  status.textContent = added
+    ? `Loaded and saved ${file.name}`
+    : `Loaded ${file.name} (already in library)`;
 }
 
 fileInput.addEventListener("change", async () => {

@@ -199,6 +199,11 @@ h1 {
   opacity: 0.45;
 }
 
+.connect-device-button.compact {
+  padding: 9px 13px;
+  font-size: 0.85rem;
+}
+
 .connected-devices {
   display: grid;
   grid-column: 1 / -1;

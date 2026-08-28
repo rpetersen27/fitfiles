@@ -4,6 +4,7 @@ export interface StoredActivity {
   startedAt: number;
   duration: number;
   blob: Blob;
+  fingerprint?: string;
 }
 
 const DATABASE_NAME = "fitfiles-training";
@@ -27,6 +28,15 @@ export async function saveActivity(activity: StoredActivity): Promise<void> {
     transaction.onerror = () => reject(transaction.error ?? new Error("Could not save activity."));
   });
   database.close();
+}
+
+export async function saveActivityIfNew(activity: StoredActivity): Promise<boolean> {
+  if (activity.fingerprint) {
+    const activities = await listActivities();
+    if (activities.some((stored) => stored.fingerprint === activity.fingerprint)) return false;
+  }
+  await saveActivity(activity);
+  return true;
 }
 
 export async function listActivities(): Promise<StoredActivity[]> {
