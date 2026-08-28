@@ -34,8 +34,10 @@ var e=Object.create,t=Object.defineProperty,n=Object.getOwnPropertyDescriptor,r=
         <p class="eyebrow">Live training</p>
         <h1>Bring your sensors into one training view.</h1>
         <p class="intro">
-          Connect your cycling sensors, follow live data, and record a training session.
-          Pair Bluetooth cycling sensors and see their measurements as you ride.
+          Connect your cycling sensors, follow live data, and record a training session.<br/>
+          Pair Bluetooth cycling sensors and see their measurements as you ride. <br/>
+          Everything is just saved on your device. <br/>
+          No logins, no cloud, no backend. Just you and your training data.
         </p>
       </section>
       <section class="device-setup panel">

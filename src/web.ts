@@ -18,10 +18,7 @@ import {
 } from "./format.js";
 import { parseFit } from "./fit.js";
 import { createFitFile } from "./fit-writer.js";
-import {
-  SessionRecorder,
-  type LiveSessionStats,
-} from "./session-recorder.js";
+import { SessionRecorder, type LiveSessionStats } from "./session-recorder.js";
 import {
   TrainingBluetoothDevice,
   type TrainingMetric,
@@ -80,8 +77,10 @@ app.innerHTML = `
         <p class="eyebrow">Live training</p>
         <h1>Bring your sensors into one training view.</h1>
         <p class="intro">
-          Connect your cycling sensors, follow live data, and record a training session.
-          Pair Bluetooth cycling sensors and see their measurements as you ride.
+          Connect your cycling sensors, follow live data, and record a training session.<br/>
+          Pair Bluetooth cycling sensors and see their measurements as you ride. <br/>
+          Everything is just saved on your device. <br/>
+          No logins, no cloud, no backend. Just you and your training data.
         </p>
       </section>
       <section class="device-setup panel">
@@ -211,8 +210,10 @@ app.innerHTML = `
   </dialog>
 `;
 
-const trainingSessionPanel = document.querySelector<HTMLElement>("#training-session");
-const workoutBuilderPanel = document.querySelector<HTMLElement>("#workout-builder");
+const trainingSessionPanel =
+  document.querySelector<HTMLElement>("#training-session");
+const workoutBuilderPanel =
+  document.querySelector<HTMLElement>("#workout-builder");
 if (trainingSessionPanel && workoutBuilderPanel) {
   trainingSessionPanel.insertAdjacentElement("afterend", workoutBuilderPanel);
 }
@@ -269,29 +270,53 @@ const overallStatsDuration = document.querySelector<HTMLElement>(
 const sectionStatsDuration = document.querySelector<HTMLElement>(
   "#section-stats-duration",
 );
-const workoutSelection = document.querySelector<HTMLSelectElement>("#workout-selection");
+const workoutSelection =
+  document.querySelector<HTMLSelectElement>("#workout-selection");
 const workoutName = document.querySelector<HTMLInputElement>("#workout-name");
 const workoutFtp = document.querySelector<HTMLInputElement>("#workout-ftp");
 const workoutSteps = document.querySelector<HTMLElement>("#workout-steps");
-const workoutTotalDuration = document.querySelector<HTMLOutputElement>("#workout-total-duration");
+const workoutTotalDuration = document.querySelector<HTMLOutputElement>(
+  "#workout-total-duration",
+);
 const workoutSummary = document.querySelector<HTMLElement>("#workout-summary");
-const workoutEditor = document.querySelector<HTMLDetailsElement>("#workout-editor");
-const workoutEditorTitle = document.querySelector<HTMLElement>("#workout-editor-title");
-const workoutAddStep = document.querySelector<HTMLButtonElement>("#workout-add-step");
+const workoutEditor =
+  document.querySelector<HTMLDetailsElement>("#workout-editor");
+const workoutEditorTitle = document.querySelector<HTMLElement>(
+  "#workout-editor-title",
+);
+const workoutAddStep =
+  document.querySelector<HTMLButtonElement>("#workout-add-step");
 const workoutSave = document.querySelector<HTMLButtonElement>("#workout-save");
-const workoutCancel = document.querySelector<HTMLButtonElement>("#workout-cancel");
+const workoutCancel =
+  document.querySelector<HTMLButtonElement>("#workout-cancel");
 const workoutEdit = document.querySelector<HTMLButtonElement>("#workout-edit");
-const workoutDelete = document.querySelector<HTMLButtonElement>("#workout-delete");
-const workoutGuidance = document.querySelector<HTMLElement>("#workout-guidance");
-const workoutProgressFill = document.querySelector<HTMLElement>("#workout-progress-fill");
-const workoutCurrentSection = document.querySelector<HTMLElement>("#workout-current-section");
-const workoutCurrentTarget = document.querySelector<HTMLElement>("#workout-current-target");
-const workoutUpcoming = document.querySelector<HTMLElement>("#workout-upcoming");
-const sectionCountdown = document.querySelector<HTMLElement>("#section-countdown");
-const sectionCountdownValue = sectionCountdown?.querySelector<HTMLElement>("strong");
-const trainingFinishedDialog = document.querySelector<HTMLDialogElement>("#training-finished-dialog");
-const trainingFinishSave = document.querySelector<HTMLButtonElement>("#training-finish-save");
-const trainingContinue = document.querySelector<HTMLButtonElement>("#training-continue");
+const workoutDelete =
+  document.querySelector<HTMLButtonElement>("#workout-delete");
+const workoutGuidance =
+  document.querySelector<HTMLElement>("#workout-guidance");
+const workoutProgressFill = document.querySelector<HTMLElement>(
+  "#workout-progress-fill",
+);
+const workoutCurrentSection = document.querySelector<HTMLElement>(
+  "#workout-current-section",
+);
+const workoutCurrentTarget = document.querySelector<HTMLElement>(
+  "#workout-current-target",
+);
+const workoutUpcoming =
+  document.querySelector<HTMLElement>("#workout-upcoming");
+const sectionCountdown =
+  document.querySelector<HTMLElement>("#section-countdown");
+const sectionCountdownValue =
+  sectionCountdown?.querySelector<HTMLElement>("strong");
+const trainingFinishedDialog = document.querySelector<HTMLDialogElement>(
+  "#training-finished-dialog",
+);
+const trainingFinishSave = document.querySelector<HTMLButtonElement>(
+  "#training-finish-save",
+);
+const trainingContinue =
+  document.querySelector<HTMLButtonElement>("#training-continue");
 
 if (
   !fileInputElement ||
@@ -321,13 +346,30 @@ if (
   !overallSessionStats ||
   !sectionSessionStats ||
   !overallStatsDuration ||
-  !sectionStatsDuration
-  || !workoutSelection || !workoutName || !workoutFtp || !workoutSteps ||
-  !workoutTotalDuration || !workoutSummary || !workoutEditor || !workoutEditorTitle ||
-  !workoutAddStep || !workoutSave || !workoutCancel || !workoutEdit || !workoutDelete || !workoutGuidance ||
-  !workoutProgressFill || !workoutCurrentSection || !workoutCurrentTarget || !workoutUpcoming ||
-  !sectionCountdown || !sectionCountdownValue ||
-  !trainingFinishedDialog || !trainingFinishSave || !trainingContinue
+  !sectionStatsDuration ||
+  !workoutSelection ||
+  !workoutName ||
+  !workoutFtp ||
+  !workoutSteps ||
+  !workoutTotalDuration ||
+  !workoutSummary ||
+  !workoutEditor ||
+  !workoutEditorTitle ||
+  !workoutAddStep ||
+  !workoutSave ||
+  !workoutCancel ||
+  !workoutEdit ||
+  !workoutDelete ||
+  !workoutGuidance ||
+  !workoutProgressFill ||
+  !workoutCurrentSection ||
+  !workoutCurrentTarget ||
+  !workoutUpcoming ||
+  !sectionCountdown ||
+  !sectionCountdownValue ||
+  !trainingFinishedDialog ||
+  !trainingFinishSave ||
+  !trainingContinue
 ) {
   throw new Error("Missing required UI elements.");
 }
@@ -390,7 +432,10 @@ const deviceReadings = new Map<
   string,
   Partial<Record<TrainingMetric, { value: number; sequence: number }>>
 >();
-const powerSamplesByDevice = new Map<string, Array<{ timestamp: number; value: number }>>();
+const powerSamplesByDevice = new Map<
+  string,
+  Array<{ timestamp: number; value: number }>
+>();
 let readingSequence = 0;
 const ACTIVE_DEVICES_KEY = "fitfiles.activeBluetoothDevices";
 const BLUETOOTH_LOG_PREFIX = "[FIT Bluetooth]";
@@ -506,9 +551,14 @@ function latestPowerDeviceId(): string | null {
 
 function rollingPowerAverage(deviceId: string, seconds: number): number | null {
   const cutoff = Date.now() - seconds * 1000;
-  const samples = powerSamplesByDevice.get(deviceId)?.filter((sample) => sample.timestamp >= cutoff) ?? [];
+  const samples =
+    powerSamplesByDevice
+      .get(deviceId)
+      ?.filter((sample) => sample.timestamp >= cutoff) ?? [];
   if (samples.length === 0) return null;
-  return samples.reduce((total, sample) => total + sample.value, 0) / samples.length;
+  return (
+    samples.reduce((total, sample) => total + sample.value, 0) / samples.length
+  );
 }
 
 function renderDashboard(): void {
@@ -518,10 +568,10 @@ function renderDashboard(): void {
   const powerDeviceId = latestPowerDeviceId();
   powerLiveValue.textContent = latest.power?.toFixed(0) ?? "--";
   power3SecondValue.textContent = powerDeviceId
-    ? rollingPowerAverage(powerDeviceId, 3)?.toFixed(0) ?? "--"
+    ? (rollingPowerAverage(powerDeviceId, 3)?.toFixed(0) ?? "--")
     : "--";
   power10SecondValue.textContent = powerDeviceId
-    ? rollingPowerAverage(powerDeviceId, 10)?.toFixed(0) ?? "--"
+    ? (rollingPowerAverage(powerDeviceId, 10)?.toFixed(0) ?? "--")
     : "--";
   speedValue.textContent = latest.speed?.toFixed(1) ?? "--";
 }
@@ -532,7 +582,10 @@ function storeDeviceReading(deviceId: string, reading: TrainingReading): void {
     const now = Date.now();
     const samples = powerSamplesByDevice.get(deviceId) ?? [];
     samples.push({ timestamp: now, value: reading.power });
-    powerSamplesByDevice.set(deviceId, samples.filter((sample) => sample.timestamp >= now - 10_000));
+    powerSamplesByDevice.set(
+      deviceId,
+      samples.filter((sample) => sample.timestamp >= now - 10_000),
+    );
   }
   for (const metric of Object.keys(reading) as TrainingMetric[]) {
     const value = reading[metric];
@@ -557,8 +610,11 @@ function selectedWorkout(): Workout | null {
 function renderWorkoutSelection(): void {
   const selected = workoutSelect.value;
   workoutSelect.replaceChildren(new Option("Free ride", ""));
-  for (const workout of workouts) workoutSelect.add(new Option(workout.name, workout.id));
-  workoutSelect.value = workouts.some((workout) => workout.id === selected) ? selected : "";
+  for (const workout of workouts)
+    workoutSelect.add(new Option(workout.name, workout.id));
+  workoutSelect.value = workouts.some((workout) => workout.id === selected)
+    ? selected
+    : "";
   renderWorkoutSummary();
   updateSessionControls();
 }
@@ -571,23 +627,38 @@ function formatMinutesAndSeconds(totalSeconds: number): string {
 
 function renderWorkoutSummary(): void {
   const workout = selectedWorkout();
-  workoutDeleteButton.disabled = !workout || sessionRecorder.state !== "stopped";
+  workoutDeleteButton.disabled =
+    !workout || sessionRecorder.state !== "stopped";
   workoutEditButton.disabled = !workout || sessionRecorder.state !== "stopped";
   if (!workout) {
-    workoutSummaryElement.textContent = "Ride without a predefined interval plan.";
+    workoutSummaryElement.textContent =
+      "Ride without a predefined interval plan.";
     return;
   }
-  const totalSeconds = workout.steps.reduce((total, step) => total + step.durationSeconds, 0);
+  const totalSeconds = workout.steps.reduce(
+    (total, step) => total + step.durationSeconds,
+    0,
+  );
   workoutSummaryElement.innerHTML = `<strong>${workout.steps.length} intervals</strong><span>${formatMinutesAndSeconds(totalSeconds)} total</span><span>FTP ${workout.ftp} W</span>`;
 }
 
 function renderWorkoutTotalDuration(): void {
-  const totalSeconds = draftSteps.reduce((total, step) => total + step.durationSeconds, 0);
-  workoutTotalDurationOutput.textContent = formatMinutesAndSeconds(totalSeconds);
+  const totalSeconds = draftSteps.reduce(
+    (total, step) => total + step.durationSeconds,
+    0,
+  );
+  workoutTotalDurationOutput.textContent =
+    formatMinutesAndSeconds(totalSeconds);
 }
 
 function moveDraftStep(from: number, to: number): void {
-  if (from < 0 || to < 0 || from >= draftSteps.length || to >= draftSteps.length) return;
+  if (
+    from < 0 ||
+    to < 0 ||
+    from >= draftSteps.length ||
+    to >= draftSteps.length
+  )
+    return;
   const [step] = draftSteps.splice(from, 1);
   if (!step) return;
   draftSteps.splice(to, 0, step);
@@ -601,37 +672,68 @@ function renderWorkoutSteps(): void {
       row.className = "workout-step";
       const zone = document.createElement("select");
       for (const definition of POWER_ZONES) {
-        zone.add(new Option(`Zone ${definition.zone} · ${definition.name} (${definition.range})`, String(definition.zone)));
+        zone.add(
+          new Option(
+            `Zone ${definition.zone} · ${definition.name} (${definition.range})`,
+            String(definition.zone),
+          ),
+        );
       }
       zone.value = String(step.zone);
       const duration = document.createElement("input");
-      duration.type = "number"; duration.min = "5"; duration.step = "5";
+      duration.type = "number";
+      duration.min = "5";
+      duration.step = "5";
       duration.value = String(step.durationSeconds);
       const formattedDuration = document.createElement("output");
       formattedDuration.className = "workout-step-duration";
-      formattedDuration.setAttribute("aria-label", "Duration in minutes and seconds");
+      formattedDuration.setAttribute(
+        "aria-label",
+        "Duration in minutes and seconds",
+      );
       const target = document.createElement("strong");
       const refresh = (): void => {
         step.zone = Number(zone.value);
         step.durationSeconds = Math.max(5, Number(duration.value) || 5);
-        formattedDuration.textContent = formatMinutesAndSeconds(step.durationSeconds);
+        formattedDuration.textContent = formatMinutesAndSeconds(
+          step.durationSeconds,
+        );
         target.textContent = `${targetPower(workoutFtpInput.valueAsNumber || 250, step.zone)} W`;
         renderWorkoutTotalDuration();
       };
-      zone.addEventListener("change", refresh); duration.addEventListener("input", refresh);
+      zone.addEventListener("change", refresh);
+      duration.addEventListener("input", refresh);
       workoutFtpInput.addEventListener("input", refresh);
       const remove = document.createElement("button");
-      remove.type = "button"; remove.className = "disconnect-device-button"; remove.textContent = "Remove";
-      remove.addEventListener("click", () => { draftSteps.splice(index, 1); renderWorkoutSteps(); });
+      remove.type = "button";
+      remove.className = "disconnect-device-button";
+      remove.textContent = "Remove";
+      remove.addEventListener("click", () => {
+        draftSteps.splice(index, 1);
+        renderWorkoutSteps();
+      });
       const moveUp = document.createElement("button");
-      moveUp.type = "button"; moveUp.className = "disconnect-device-button interval-move"; moveUp.textContent = "Move up";
+      moveUp.type = "button";
+      moveUp.className = "disconnect-device-button interval-move";
+      moveUp.textContent = "Move up";
       moveUp.disabled = index === 0;
       moveUp.addEventListener("click", () => moveDraftStep(index, index - 1));
       const moveDown = document.createElement("button");
-      moveDown.type = "button"; moveDown.className = "disconnect-device-button interval-move"; moveDown.textContent = "Move down";
+      moveDown.type = "button";
+      moveDown.className = "disconnect-device-button interval-move";
+      moveDown.textContent = "Move down";
       moveDown.disabled = index === draftSteps.length - 1;
       moveDown.addEventListener("click", () => moveDraftStep(index, index + 1));
-      row.append(zone, duration, document.createTextNode(" seconds"), formattedDuration, target, moveUp, moveDown, remove);
+      row.append(
+        zone,
+        duration,
+        document.createTextNode(" seconds"),
+        formattedDuration,
+        target,
+        moveUp,
+        moveDown,
+        remove,
+      );
       refresh();
       return row;
     }),
@@ -640,7 +742,8 @@ function renderWorkoutSteps(): void {
 }
 
 workoutAddStepButton.addEventListener("click", () => {
-  draftSteps.push({ durationSeconds: 300, zone: 2 }); renderWorkoutSteps();
+  draftSteps.push({ durationSeconds: 300, zone: 2 });
+  renderWorkoutSteps();
 });
 
 function finishEditingWorkout(): void {
@@ -686,12 +789,15 @@ workoutSaveButton.addEventListener("click", () => {
     steps: draftSteps.map((step) => ({ ...step })),
   };
   if (editingWorkoutId) {
-    workouts = workouts.map((existing) => existing.id === editingWorkoutId ? workout : existing);
+    workouts = workouts.map((existing) =>
+      existing.id === editingWorkoutId ? workout : existing,
+    );
   } else {
     workouts.push(workout);
   }
   saveWorkouts(workouts);
-  workoutSelect.value = workout.id; renderWorkoutSelection();
+  workoutSelect.value = workout.id;
+  renderWorkoutSelection();
   resetWorkoutEditor();
 });
 workoutDeleteButton.addEventListener("click", () => {
@@ -699,7 +805,8 @@ workoutDeleteButton.addEventListener("click", () => {
   if (!workout || !window.confirm(`Delete “${workout.name}”?`)) return;
   workouts = workouts.filter((workout) => workout.id !== workoutSelect.value);
   if (editingWorkoutId === workout.id) resetWorkoutEditor();
-  saveWorkouts(workouts); renderWorkoutSelection();
+  saveWorkouts(workouts);
+  renderWorkoutSelection();
 });
 workoutSelect.addEventListener("change", () => {
   renderWorkoutSummary();
@@ -729,9 +836,10 @@ function renderStatsBlock(
 ): void {
   durationElement.textContent = formatClock(stats.duration);
   const averagePower = formatPower(stats.averagePower);
-  const powerDisplay = targetPowerValue !== undefined
-    ? `${averagePower} / ${formatPower(targetPowerValue)}`
-    : averagePower;
+  const powerDisplay =
+    targetPowerValue !== undefined
+      ? `${averagePower} / ${formatPower(targetPowerValue)}`
+      : averagePower;
   element.innerHTML = `
     ${metricRow("Speed", formatSpeed(stats.speed != null ? stats.speed / 3.6 : null))}
     ${metricRow("Distance", formatMeters(stats.distance))}
@@ -772,12 +880,19 @@ function renderWorkoutProgress(): void {
   const active = sessionRecorder.state !== "stopped";
   const sectionIndex = sessionRecorder.sectionNumber - 1;
   const step = workout?.steps[sectionIndex];
-  workoutGuidanceElement.classList.toggle("hidden", !workout || !step || !active);
+  workoutGuidanceElement.classList.toggle(
+    "hidden",
+    !workout || !step || !active,
+  );
   if (!workout || !step || !active) return;
 
-  const elapsed = Math.min(step.durationSeconds, structuredSectionElapsed(workout));
+  const elapsed = Math.min(
+    step.durationSeconds,
+    structuredSectionElapsed(workout),
+  );
   const remaining = Math.max(0, step.durationSeconds - elapsed);
-  const progress = step.durationSeconds > 0 ? (elapsed / step.durationSeconds) * 100 : 100;
+  const progress =
+    step.durationSeconds > 0 ? (elapsed / step.durationSeconds) * 100 : 100;
   workoutProgressFillElement.style.width = `${progress}%`;
   workoutCurrentSectionElement.textContent = `Section ${sectionIndex + 1}/${workout.steps.length} · Zone ${step.zone}`;
   workoutCurrentTargetElement.textContent = `${targetPower(workout.ftp, step.zone)} W`;
@@ -795,7 +910,10 @@ function updateSessionControls(): void {
   sessionStartButton.classList.toggle("hidden", running || paused);
   sessionPauseButton.classList.toggle("hidden", !running);
   sessionResumeButton.classList.toggle("hidden", !paused);
-  sessionNextButton.classList.toggle("hidden", Boolean(workout) || (!running && !paused));
+  sessionNextButton.classList.toggle(
+    "hidden",
+    Boolean(workout) || (!running && !paused),
+  );
   sessionStopButton.classList.toggle("hidden", !running && !paused);
   sessionStateLabel.textContent = running
     ? "Recording live sensor data."
@@ -810,11 +928,12 @@ function updateSessionControls(): void {
 }
 
 function activityFileName(startedAt: number, trainingName: string): string {
-  const safeName = trainingName
-    .trim()
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}]+/gu, "-")
-    .replace(/^-|-$/g, "") || "training";
+  const safeName =
+    trainingName
+      .trim()
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}]+/gu, "-")
+      .replace(/^-|-$/g, "") || "training";
   return `${safeName}-${new Date(startedAt).toISOString().replace(/[:.]/g, "-")}.fit`;
 }
 
