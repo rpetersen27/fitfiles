@@ -399,6 +399,250 @@ h1 {
 .training-placeholder {
   display: grid;
   gap: 12px;
+  margin-bottom: 24px;
+}
+
+.workout-builder {
+  display: grid;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.workout-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.workout-title-row h2 {
+  margin-top: 5px;
+  font-family: "Fraunces", Georgia, serif;
+}
+
+.workout-title-row select,
+.workout-form input,
+.workout-step select,
+.workout-step input {
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: white;
+  font: inherit;
+}
+
+.workout-selection-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.workout-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  color: var(--muted);
+  background: rgba(14, 124, 102, 0.06);
+}
+
+.workout-summary strong {
+  color: var(--ink);
+}
+
+.workout-builder summary {
+  color: var(--accent-strong);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.workout-form {
+  display: grid;
+  gap: 14px;
+  margin-top: 16px;
+}
+
+.workout-form > label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  max-width: 440px;
+  gap: 12px;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.workout-steps {
+  display: grid;
+  gap: 8px;
+}
+
+.workout-step {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.workout-step input {
+  width: 90px;
+}
+
+.workout-step strong {
+  min-width: 60px;
+  color: var(--accent-strong);
+}
+
+.workout-step .interval-move {
+  padding-inline: 9px;
+  font-size: 0.82rem;
+}
+
+.workout-step-duration {
+  min-width: 5ch;
+  padding: 5px 8px;
+  border-radius: 8px;
+  color: var(--muted);
+  background: rgba(14, 124, 102, 0.08);
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  text-align: center;
+}
+
+.workout-total {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: 4px;
+  font-weight: 700;
+}
+
+.workout-total output {
+  color: var(--accent-strong);
+  font-size: 1.15rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.workout-guidance {
+  display: grid;
+  gap: 9px;
+}
+
+.workout-progress {
+  position: relative;
+  overflow: hidden;
+  border-radius: 16px;
+  color: white;
+  background: var(--accent);
+}
+
+.workout-progress-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 0;
+  background: var(--accent-strong);
+  transition: width 0.25s linear;
+}
+
+.workout-guidance-content {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 18px;
+}
+
+.workout-guidance-content strong {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 1.65rem;
+}
+
+.workout-upcoming {
+  padding: 0 4px;
+  color: var(--muted);
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.section-countdown {
+  position: fixed;
+  z-index: 100;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  color: white;
+  background: rgba(9, 87, 70, 0.88);
+  backdrop-filter: blur(10px);
+  pointer-events: none;
+}
+
+.section-countdown.hidden {
+  display: none;
+}
+
+.section-countdown span {
+  font-size: clamp(1rem, 3vw, 1.5rem);
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.section-countdown strong {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: clamp(9rem, 35vw, 26rem);
+  line-height: 0.9;
+}
+
+.section-countdown p {
+  margin-top: 24px;
+  font-size: clamp(1.2rem, 4vw, 2rem);
+  font-weight: 700;
+  text-align: center;
+}
+
+.countdown-pop {
+  animation: countdown-pop 0.7s ease-out;
+}
+
+.training-finished-dialog {
+  width: min(520px, calc(100% - 32px));
+  padding: 28px;
+  border: 1px solid var(--line);
+  border-radius: 24px;
+  color: var(--ink);
+  background: var(--paper);
+  box-shadow: var(--shadow);
+}
+
+.training-finished-dialog::backdrop {
+  background: rgba(20, 35, 31, 0.65);
+  backdrop-filter: blur(5px);
+}
+
+.training-finished-dialog h2 {
+  margin: 6px 0 10px;
+  font-family: "Fraunces", Georgia, serif;
+  font-size: 2rem;
+}
+
+.training-finished-dialog > p:not(.eyebrow) {
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.training-finished-dialog .session-controls {
+  margin-top: 22px;
+}
+
+@keyframes countdown-pop {
+  from { opacity: 0.35; transform: scale(1.35); }
+  to { opacity: 1; transform: scale(1); }
 }
 
 .session-heading {
@@ -647,6 +891,12 @@ h1 {
 
   .session-stats-grid {
     grid-template-columns: 1fr;
+  }
+
+  .workout-title-row,
+  .workout-form > label {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .session-clock {

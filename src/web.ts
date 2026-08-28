@@ -29,6 +29,14 @@ import {
 } from "./training-device.js";
 import "./styles.css";
 import type { AnalysisResult, Stats } from "./types.js";
+import {
+  POWER_ZONES,
+  loadWorkouts,
+  saveWorkouts,
+  targetPower,
+  type Workout,
+  type WorkoutStep,
+} from "./workouts.js";
 
 const app = document.querySelector<HTMLDivElement>("#app");
 
@@ -114,14 +122,46 @@ app.innerHTML = `
           <div class="live-reading"><strong id="speed-reading">--</strong><span>km/h</span></div>
         </article>
       </section>
-      <article class="panel training-placeholder">
+      <section id="workout-builder" class="panel workout-builder">
+        <div class="workout-title-row">
+          <div><p class="eyebrow">Structured training</p><h2>Training plan</h2></div>
+          <div class="workout-selection-actions">
+            <select id="workout-selection" aria-label="Selected training"><option value="">Free ride</option></select>
+            <button id="workout-edit" class="disconnect-device-button" type="button" disabled>Edit</button>
+            <button id="workout-delete" class="disconnect-device-button danger" type="button" disabled>Delete</button>
+          </div>
+        </div>
+        <div id="workout-summary" class="workout-summary">Ride without a predefined interval plan.</div>
+        <details id="workout-editor">
+          <summary id="workout-editor-title">Create a training</summary>
+          <div class="workout-form">
+            <label>Name <input id="workout-name" type="text" value="My training" /></label>
+            <label>FTP <span><input id="workout-ftp" type="number" min="50" max="600" value="250" /> W</span></label>
+            <div id="workout-steps" class="workout-steps"></div>
+            <div class="workout-total"><span>Total time</span><output id="workout-total-duration">05:00</output></div>
+            <div class="session-controls">
+              <button id="workout-add-step" class="disconnect-device-button" type="button">Add interval</button>
+              <button id="workout-save" class="connect-device-button compact" type="button">Save training</button>
+              <button id="workout-cancel" class="disconnect-device-button hidden" type="button">Cancel editing</button>
+            </div>
+          </div>
+        </details>
+      </section>
+      <article id="training-session" class="panel training-placeholder">
         <p class="eyebrow">Session setup</p>
         <div class="session-heading">
           <div>
-            <h2>Training session</h2>
+            <h2 id="session-title">Training session: Free ride</h2>
             <p id="session-state" class="status">Ready to start.</p>
           </div>
           <div class="session-clock"><strong id="session-timer">00:00:00</strong><span id="session-section">Section 1</span></div>
+        </div>
+        <div id="workout-guidance" class="workout-guidance hidden">
+          <div class="workout-progress">
+            <div id="workout-progress-fill" class="workout-progress-fill"></div>
+            <div class="workout-guidance-content"><span id="workout-current-section"></span><strong id="workout-current-target"></strong></div>
+          </div>
+          <div id="workout-upcoming" class="workout-upcoming"></div>
         </div>
         <div class="session-controls">
           <button id="session-start" class="connect-device-button" type="button">Start</button>
@@ -154,7 +194,27 @@ app.innerHTML = `
       </section>
     </section>
   </main>
+  <div id="section-countdown" class="section-countdown hidden" aria-live="assertive">
+    <span>Next section in</span>
+    <strong>10</strong>
+    <p id="section-countdown-next"></p>
+  </div>
+  <dialog id="training-finished-dialog" class="training-finished-dialog">
+    <p class="eyebrow">Training finished</p>
+    <h2>Great work!</h2>
+    <p>Would you like to finish and save this session, or continue riding without a power target?</p>
+    <div class="session-controls">
+      <button id="training-finish-save" class="connect-device-button" type="button">Finish and save</button>
+      <button id="training-continue" class="disconnect-device-button" type="button">Continue riding</button>
+    </div>
+  </dialog>
 `;
+
+const trainingSessionPanel = document.querySelector<HTMLElement>("#training-session");
+const workoutBuilderPanel = document.querySelector<HTMLElement>("#workout-builder");
+if (trainingSessionPanel && workoutBuilderPanel) {
+  trainingSessionPanel.insertAdjacentElement("afterend", workoutBuilderPanel);
+}
 
 const fileInputElement = document.querySelector<HTMLInputElement>("#fit-file");
 const statusElement = document.querySelector<HTMLParagraphElement>("#status");
@@ -179,6 +239,7 @@ const bluetoothStatus =
 const connectedDevices =
   document.querySelector<HTMLElement>("#connected-devices");
 const sessionStateText = document.querySelector<HTMLElement>("#session-state");
+const sessionTitle = document.querySelector<HTMLElement>("#session-title");
 const sessionTimer = document.querySelector<HTMLElement>("#session-timer");
 const sessionSection = document.querySelector<HTMLElement>("#session-section");
 const sessionStart =
@@ -205,6 +266,30 @@ const overallStatsDuration = document.querySelector<HTMLElement>(
 const sectionStatsDuration = document.querySelector<HTMLElement>(
   "#section-stats-duration",
 );
+const workoutSelection = document.querySelector<HTMLSelectElement>("#workout-selection");
+const workoutName = document.querySelector<HTMLInputElement>("#workout-name");
+const workoutFtp = document.querySelector<HTMLInputElement>("#workout-ftp");
+const workoutSteps = document.querySelector<HTMLElement>("#workout-steps");
+const workoutTotalDuration = document.querySelector<HTMLOutputElement>("#workout-total-duration");
+const workoutSummary = document.querySelector<HTMLElement>("#workout-summary");
+const workoutEditor = document.querySelector<HTMLDetailsElement>("#workout-editor");
+const workoutEditorTitle = document.querySelector<HTMLElement>("#workout-editor-title");
+const workoutAddStep = document.querySelector<HTMLButtonElement>("#workout-add-step");
+const workoutSave = document.querySelector<HTMLButtonElement>("#workout-save");
+const workoutCancel = document.querySelector<HTMLButtonElement>("#workout-cancel");
+const workoutEdit = document.querySelector<HTMLButtonElement>("#workout-edit");
+const workoutDelete = document.querySelector<HTMLButtonElement>("#workout-delete");
+const workoutGuidance = document.querySelector<HTMLElement>("#workout-guidance");
+const workoutProgressFill = document.querySelector<HTMLElement>("#workout-progress-fill");
+const workoutCurrentSection = document.querySelector<HTMLElement>("#workout-current-section");
+const workoutCurrentTarget = document.querySelector<HTMLElement>("#workout-current-target");
+const workoutUpcoming = document.querySelector<HTMLElement>("#workout-upcoming");
+const sectionCountdown = document.querySelector<HTMLElement>("#section-countdown");
+const sectionCountdownValue = sectionCountdown?.querySelector<HTMLElement>("strong");
+const sectionCountdownNext = document.querySelector<HTMLElement>("#section-countdown-next");
+const trainingFinishedDialog = document.querySelector<HTMLDialogElement>("#training-finished-dialog");
+const trainingFinishSave = document.querySelector<HTMLButtonElement>("#training-finish-save");
+const trainingContinue = document.querySelector<HTMLButtonElement>("#training-continue");
 
 if (
   !fileInputElement ||
@@ -219,6 +304,7 @@ if (
   !bluetoothStatus ||
   !connectedDevices ||
   !sessionStateText ||
+  !sessionTitle ||
   !sessionTimer ||
   !sessionSection ||
   !sessionStart ||
@@ -232,6 +318,12 @@ if (
   !sectionSessionStats ||
   !overallStatsDuration ||
   !sectionStatsDuration
+  || !workoutSelection || !workoutName || !workoutFtp || !workoutSteps ||
+  !workoutTotalDuration || !workoutSummary || !workoutEditor || !workoutEditorTitle ||
+  !workoutAddStep || !workoutSave || !workoutCancel || !workoutEdit || !workoutDelete || !workoutGuidance ||
+  !workoutProgressFill || !workoutCurrentSection || !workoutCurrentTarget || !workoutUpcoming ||
+  !sectionCountdown || !sectionCountdownValue || !sectionCountdownNext ||
+  !trainingFinishedDialog || !trainingFinishSave || !trainingContinue
 ) {
   throw new Error("Missing required UI elements.");
 }
@@ -248,6 +340,7 @@ const bluetoothConnectButton = bluetoothButton;
 const bluetoothStatusText = bluetoothStatus;
 const connectedDevicesList = connectedDevices;
 const sessionStateLabel = sessionStateText;
+const sessionTitleLabel = sessionTitle;
 const sessionTimerLabel = sessionTimer;
 const sessionSectionLabel = sessionSection;
 const sessionStartButton = sessionStart;
@@ -261,6 +354,30 @@ const overallSessionStatsElement = overallSessionStats;
 const sectionSessionStatsElement = sectionSessionStats;
 const overallStatsDurationLabel = overallStatsDuration;
 const sectionStatsDurationLabel = sectionStatsDuration;
+const workoutSelect = workoutSelection;
+const workoutNameInput = workoutName;
+const workoutFtpInput = workoutFtp;
+const workoutStepsElement = workoutSteps;
+const workoutTotalDurationOutput = workoutTotalDuration;
+const workoutSummaryElement = workoutSummary;
+const workoutEditorElement = workoutEditor;
+const workoutEditorTitleElement = workoutEditorTitle;
+const workoutAddStepButton = workoutAddStep;
+const workoutSaveButton = workoutSave;
+const workoutCancelButton = workoutCancel;
+const workoutEditButton = workoutEdit;
+const workoutDeleteButton = workoutDelete;
+const workoutGuidanceElement = workoutGuidance;
+const workoutProgressFillElement = workoutProgressFill;
+const workoutCurrentSectionElement = workoutCurrentSection;
+const workoutCurrentTargetElement = workoutCurrentTarget;
+const workoutUpcomingElement = workoutUpcoming;
+const countdownOverlay = sectionCountdown;
+const countdownValue = sectionCountdownValue;
+const countdownNext = sectionCountdownNext;
+const finishedDialog = trainingFinishedDialog;
+const finishAndSaveButton = trainingFinishSave;
+const continueRidingButton = trainingContinue;
 const devices = new Map<string, TrainingBluetoothDevice>();
 const deviceCapabilities = new Map<string, Set<TrainingMetric>>();
 const connectingDevices = new Set<string>();
@@ -389,6 +506,171 @@ function storeDeviceReading(deviceId: string, reading: TrainingReading): void {
 }
 
 const sessionRecorder = new SessionRecorder(getLatestReadings);
+let workouts = loadWorkouts();
+let draftSteps: WorkoutStep[] = [{ durationSeconds: 300, zone: 2 }];
+let editingWorkoutId: string | null = null;
+let sectionTransitioning = false;
+let countdownSecond: number | null = null;
+let finishingPromptOpen = false;
+
+function selectedWorkout(): Workout | null {
+  return workouts.find((workout) => workout.id === workoutSelect.value) ?? null;
+}
+
+function renderWorkoutSelection(): void {
+  const selected = workoutSelect.value;
+  workoutSelect.replaceChildren(new Option("Free ride", ""));
+  for (const workout of workouts) workoutSelect.add(new Option(workout.name, workout.id));
+  workoutSelect.value = workouts.some((workout) => workout.id === selected) ? selected : "";
+  renderWorkoutSummary();
+  updateSessionControls();
+}
+
+function formatMinutesAndSeconds(totalSeconds: number): string {
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = Math.floor(totalSeconds % 60);
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+function renderWorkoutSummary(): void {
+  const workout = selectedWorkout();
+  workoutDeleteButton.disabled = !workout || sessionRecorder.state !== "stopped";
+  workoutEditButton.disabled = !workout || sessionRecorder.state !== "stopped";
+  if (!workout) {
+    workoutSummaryElement.textContent = "Ride without a predefined interval plan.";
+    return;
+  }
+  const totalSeconds = workout.steps.reduce((total, step) => total + step.durationSeconds, 0);
+  workoutSummaryElement.innerHTML = `<strong>${workout.steps.length} intervals</strong><span>${formatMinutesAndSeconds(totalSeconds)} total</span><span>FTP ${workout.ftp} W</span>`;
+}
+
+function renderWorkoutTotalDuration(): void {
+  const totalSeconds = draftSteps.reduce((total, step) => total + step.durationSeconds, 0);
+  workoutTotalDurationOutput.textContent = formatMinutesAndSeconds(totalSeconds);
+}
+
+function moveDraftStep(from: number, to: number): void {
+  if (from < 0 || to < 0 || from >= draftSteps.length || to >= draftSteps.length) return;
+  const [step] = draftSteps.splice(from, 1);
+  if (!step) return;
+  draftSteps.splice(to, 0, step);
+  renderWorkoutSteps();
+}
+
+function renderWorkoutSteps(): void {
+  workoutStepsElement.replaceChildren(
+    ...draftSteps.map((step, index) => {
+      const row = document.createElement("div");
+      row.className = "workout-step";
+      const zone = document.createElement("select");
+      for (const definition of POWER_ZONES) {
+        zone.add(new Option(`Zone ${definition.zone} · ${definition.name} (${definition.range})`, String(definition.zone)));
+      }
+      zone.value = String(step.zone);
+      const duration = document.createElement("input");
+      duration.type = "number"; duration.min = "5"; duration.step = "5";
+      duration.value = String(step.durationSeconds);
+      const formattedDuration = document.createElement("output");
+      formattedDuration.className = "workout-step-duration";
+      formattedDuration.setAttribute("aria-label", "Duration in minutes and seconds");
+      const target = document.createElement("strong");
+      const refresh = (): void => {
+        step.zone = Number(zone.value);
+        step.durationSeconds = Math.max(5, Number(duration.value) || 5);
+        formattedDuration.textContent = formatMinutesAndSeconds(step.durationSeconds);
+        target.textContent = `${targetPower(workoutFtpInput.valueAsNumber || 250, step.zone)} W`;
+        renderWorkoutTotalDuration();
+      };
+      zone.addEventListener("change", refresh); duration.addEventListener("input", refresh);
+      workoutFtpInput.addEventListener("input", refresh);
+      const remove = document.createElement("button");
+      remove.type = "button"; remove.className = "disconnect-device-button"; remove.textContent = "Remove";
+      remove.addEventListener("click", () => { draftSteps.splice(index, 1); renderWorkoutSteps(); });
+      const moveUp = document.createElement("button");
+      moveUp.type = "button"; moveUp.className = "disconnect-device-button interval-move"; moveUp.textContent = "Move up";
+      moveUp.disabled = index === 0;
+      moveUp.addEventListener("click", () => moveDraftStep(index, index - 1));
+      const moveDown = document.createElement("button");
+      moveDown.type = "button"; moveDown.className = "disconnect-device-button interval-move"; moveDown.textContent = "Move down";
+      moveDown.disabled = index === draftSteps.length - 1;
+      moveDown.addEventListener("click", () => moveDraftStep(index, index + 1));
+      row.append(zone, duration, document.createTextNode(" seconds"), formattedDuration, target, moveUp, moveDown, remove);
+      refresh();
+      return row;
+    }),
+  );
+  renderWorkoutTotalDuration();
+}
+
+workoutAddStepButton.addEventListener("click", () => {
+  draftSteps.push({ durationSeconds: 300, zone: 2 }); renderWorkoutSteps();
+});
+
+function finishEditingWorkout(): void {
+  editingWorkoutId = null;
+  workoutEditorTitleElement.textContent = "Create a training";
+  workoutSaveButton.textContent = "Save training";
+  workoutCancelButton.classList.add("hidden");
+}
+
+function resetWorkoutEditor(): void {
+  finishEditingWorkout();
+  workoutEditorElement.open = false;
+  workoutNameInput.value = "My training";
+  workoutFtpInput.value = "250";
+  draftSteps = [{ durationSeconds: 300, zone: 2 }];
+  renderWorkoutSteps();
+}
+
+workoutEditButton.addEventListener("click", () => {
+  const workout = selectedWorkout();
+  if (!workout) return;
+  editingWorkoutId = workout.id;
+  workoutNameInput.value = workout.name;
+  workoutFtpInput.value = String(workout.ftp);
+  draftSteps = workout.steps.map((step) => ({ ...step }));
+  workoutEditorTitleElement.textContent = `Edit ${workout.name}`;
+  workoutSaveButton.textContent = "Save changes";
+  workoutCancelButton.classList.remove("hidden");
+  workoutEditorElement.open = true;
+  renderWorkoutSteps();
+});
+
+workoutCancelButton.addEventListener("click", () => {
+  resetWorkoutEditor();
+});
+
+workoutSaveButton.addEventListener("click", () => {
+  if (draftSteps.length === 0) return;
+  const workout: Workout = {
+    id: editingWorkoutId ?? crypto.randomUUID(),
+    name: workoutNameInput.value.trim() || "Training",
+    ftp: Math.max(50, workoutFtpInput.valueAsNumber || 250),
+    steps: draftSteps.map((step) => ({ ...step })),
+  };
+  if (editingWorkoutId) {
+    workouts = workouts.map((existing) => existing.id === editingWorkoutId ? workout : existing);
+  } else {
+    workouts.push(workout);
+  }
+  saveWorkouts(workouts);
+  workoutSelect.value = workout.id; renderWorkoutSelection();
+  resetWorkoutEditor();
+});
+workoutDeleteButton.addEventListener("click", () => {
+  const workout = selectedWorkout();
+  if (!workout || !window.confirm(`Delete “${workout.name}”?`)) return;
+  workouts = workouts.filter((workout) => workout.id !== workoutSelect.value);
+  if (editingWorkoutId === workout.id) resetWorkoutEditor();
+  saveWorkouts(workouts); renderWorkoutSelection();
+});
+workoutSelect.addEventListener("change", () => {
+  renderWorkoutSummary();
+  updateSessionControls();
+});
+renderWorkoutSteps();
+renderWorkoutSelection();
+
 let savedActivities: StoredActivity[] = [];
 const busyActivities = new Map<string, { name: string; startedAt: number }>();
 
@@ -431,13 +713,36 @@ function renderSessionStats(): void {
   );
 }
 
+function renderWorkoutProgress(): void {
+  const workout = selectedWorkout();
+  sessionTitleLabel.textContent = `Training session: ${workout?.name ?? "Free ride"}`;
+  const active = sessionRecorder.state !== "stopped";
+  const sectionIndex = sessionRecorder.sectionNumber - 1;
+  const step = workout?.steps[sectionIndex];
+  workoutGuidanceElement.classList.toggle("hidden", !workout || !step || !active);
+  if (!workout || !step || !active) return;
+
+  const elapsed = Math.min(step.durationSeconds, sessionRecorder.currentSectionStats.duration);
+  const remaining = Math.max(0, step.durationSeconds - elapsed);
+  const progress = step.durationSeconds > 0 ? (elapsed / step.durationSeconds) * 100 : 100;
+  workoutProgressFillElement.style.width = `${progress}%`;
+  workoutCurrentSectionElement.textContent = `Section ${sectionIndex + 1}/${workout.steps.length} · Zone ${step.zone}`;
+  workoutCurrentTargetElement.textContent = `${targetPower(workout.ftp, step.zone)} W`;
+
+  const upcoming = workout.steps[sectionIndex + 1];
+  workoutUpcomingElement.textContent = upcoming
+    ? `Next: Zone ${upcoming.zone} · ${targetPower(workout.ftp, upcoming.zone)} W for ${formatMinutesAndSeconds(upcoming.durationSeconds)} · starts in ${formatMinutesAndSeconds(remaining)}`
+    : `Training ends in ${formatMinutesAndSeconds(remaining)}`;
+}
+
 function updateSessionControls(): void {
   const running = sessionRecorder.state === "running";
   const paused = sessionRecorder.state === "paused";
+  const workout = selectedWorkout();
   sessionStartButton.classList.toggle("hidden", running || paused);
   sessionPauseButton.classList.toggle("hidden", !running);
   sessionResumeButton.classList.toggle("hidden", !paused);
-  sessionNextButton.classList.toggle("hidden", !running && !paused);
+  sessionNextButton.classList.toggle("hidden", Boolean(workout) || (!running && !paused));
   sessionStopButton.classList.toggle("hidden", !running && !paused);
   sessionStateLabel.textContent = running
     ? "Recording live sensor data."
@@ -445,10 +750,19 @@ function updateSessionControls(): void {
       ? "Session paused."
       : "Ready to start.";
   sessionSectionLabel.textContent = `Section ${Math.max(1, sessionRecorder.sectionNumber)}`;
+  workoutSelect.disabled = running || paused;
+  workoutEditButton.disabled = !workout || running || paused;
+  workoutDeleteButton.disabled = !workout || running || paused;
+  renderWorkoutProgress();
 }
 
-function activityFileName(startedAt: number): string {
-  return `training-${new Date(startedAt).toISOString().replace(/[:.]/g, "-")}.fit`;
+function activityFileName(startedAt: number, trainingName: string): string {
+  const safeName = trainingName
+    .trim()
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, "-")
+    .replace(/^-|-$/g, "") || "training";
+  return `${safeName}-${new Date(startedAt).toISOString().replace(/[:.]/g, "-")}.fit`;
 }
 
 async function fingerprintBlob(blob: Blob): Promise<string> {
@@ -557,6 +871,9 @@ function renderActivities(): void {
 }
 
 sessionStartButton.addEventListener("click", () => {
+  sectionTransitioning = false;
+  countdownSecond = null;
+  finishingPromptOpen = false;
   sessionRecorder.start();
   sessionTimerLabel.textContent = "00:00:00";
   updateSessionControls();
@@ -577,13 +894,17 @@ sessionNextButton.addEventListener("click", () => {
   updateSessionControls();
   renderSessionStats();
 });
-sessionStopButton.addEventListener("click", async () => {
+async function finishSession(): Promise<void> {
+  const trainingName = selectedWorkout()?.name ?? "Free ride";
+  countdownOverlay.classList.add("hidden");
+  if (finishedDialog.open) finishedDialog.close();
+  finishingPromptOpen = false;
   const recorded = sessionRecorder.stop();
   if (!recorded) return;
   sessionTimerLabel.textContent = formatClock(recorded.totalTimerTime);
   updateSessionControls();
   renderSessionStats();
-  const name = activityFileName(recorded.startedAt);
+  const name = activityFileName(recorded.startedAt, trainingName);
   busyActivities.set(recorded.id, { name, startedAt: recorded.startedAt });
   renderActivities();
   await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
@@ -607,12 +928,72 @@ sessionStopButton.addEventListener("click", async () => {
     busyActivities.delete(recorded.id);
     renderActivities();
   }
+}
+
+sessionStopButton.addEventListener("click", () => void finishSession());
+
+finishedDialog.addEventListener("cancel", (event) => event.preventDefault());
+finishAndSaveButton.addEventListener("click", () => void finishSession());
+continueRidingButton.addEventListener("click", () => {
+  sessionRecorder.nextSection();
+  sessionRecorder.resume();
+  finishedDialog.close();
+  finishingPromptOpen = false;
+  sectionTransitioning = false;
+  countdownSecond = null;
+  updateSessionControls();
+  renderSessionStats();
 });
 
 window.setInterval(() => {
   if (sessionRecorder.state !== "stopped") {
     sessionTimerLabel.textContent = formatClock(sessionRecorder.timerSeconds);
     renderSessionStats();
+    renderWorkoutProgress();
+  }
+  const workout = selectedWorkout();
+  const step = workout?.steps[sessionRecorder.sectionNumber - 1];
+  if (sessionRecorder.state !== "running" || !workout || !step) {
+    countdownOverlay.classList.add("hidden");
+    return;
+  }
+  const remaining = step.durationSeconds - sessionRecorder.currentSectionStats.duration;
+  if (remaining <= 10) {
+    const second = Math.max(0, Math.ceil(remaining));
+    const nextStep = workout.steps[sessionRecorder.sectionNumber];
+    countdownNext.textContent = nextStep
+      ? `Next: Zone ${nextStep.zone} · ${targetPower(workout.ftp, nextStep.zone)} W · ${formatMinutesAndSeconds(nextStep.durationSeconds)}`
+      : "End of training";
+    countdownOverlay.classList.remove("hidden");
+    if (second !== countdownSecond) {
+      countdownSecond = second;
+      countdownValue.textContent = String(second);
+      countdownValue.classList.remove("countdown-pop");
+      void countdownValue.offsetWidth;
+      countdownValue.classList.add("countdown-pop");
+    }
+  } else {
+    countdownOverlay.classList.add("hidden");
+  }
+  if (remaining <= 0 && !sectionTransitioning) {
+    sectionTransitioning = true;
+    window.setTimeout(() => {
+      if (sessionRecorder.state !== "running") { sectionTransitioning = false; return; }
+      if (sessionRecorder.sectionNumber < workout.steps.length) {
+        sessionRecorder.nextSection();
+        countdownSecond = null;
+        sectionTransitioning = false;
+        updateSessionControls();
+        renderSessionStats();
+      } else {
+        sessionRecorder.pause();
+        countdownOverlay.classList.add("hidden");
+        finishingPromptOpen = true;
+        updateSessionControls();
+        renderSessionStats();
+        finishedDialog.showModal();
+      }
+    }, 600);
   }
 }, 250);
 
