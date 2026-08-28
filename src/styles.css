@@ -576,9 +576,8 @@ h1 {
   display: grid;
   place-content: center;
   justify-items: center;
-  color: white;
-  background: rgba(9, 87, 70, 0.88);
-  backdrop-filter: blur(10px);
+  color: var(--accent-strong);
+  background: transparent;
   pointer-events: none;
 }
 
@@ -586,28 +585,15 @@ h1 {
   display: none;
 }
 
-.section-countdown span {
-  font-size: clamp(1rem, 3vw, 1.5rem);
-  font-weight: 700;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-}
-
 .section-countdown strong {
   font-family: "IBM Plex Mono", monospace;
   font-size: clamp(9rem, 35vw, 26rem);
   line-height: 0.9;
-}
-
-.section-countdown p {
-  margin-top: 24px;
-  font-size: clamp(1.2rem, 4vw, 2rem);
-  font-weight: 700;
-  text-align: center;
+  text-shadow: 0 2px 18px rgba(255, 255, 255, 0.9);
 }
 
 .countdown-pop {
-  animation: countdown-pop 0.7s ease-out;
+  animation: countdown-pop 0.9s ease-out forwards;
 }
 
 .training-finished-dialog {
@@ -641,8 +627,8 @@ h1 {
 }
 
 @keyframes countdown-pop {
-  from { opacity: 0.35; transform: scale(1.35); }
-  to { opacity: 1; transform: scale(1); }
+  from { opacity: 0.72; transform: scale(1.12); }
+  to { opacity: 0; transform: scale(0.9); }
 }
 
 .session-heading {

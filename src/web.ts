@@ -176,7 +176,7 @@ app.innerHTML = `
             <dl id="overall-session-stats" class="metrics compact-metrics"></dl>
           </section>
           <section class="session-stats">
-            <header><h3>Current section</h3><span id="section-stats-duration">00:00:00</span></header>
+            <header><h3>Current lap</h3><span id="section-stats-duration">00:00:00</span></header>
             <dl id="section-session-stats" class="metrics compact-metrics"></dl>
           </section>
         </div>
@@ -194,11 +194,7 @@ app.innerHTML = `
       </section>
     </section>
   </main>
-  <div id="section-countdown" class="section-countdown hidden" aria-live="assertive">
-    <span>Next section in</span>
-    <strong>10</strong>
-    <p id="section-countdown-next"></p>
-  </div>
+  <div id="section-countdown" class="section-countdown hidden" aria-label="Next section countdown" aria-live="assertive"><strong>10</strong></div>
   <dialog id="training-finished-dialog" class="training-finished-dialog">
     <p class="eyebrow">Training finished</p>
     <h2>Great work!</h2>
@@ -286,7 +282,6 @@ const workoutCurrentTarget = document.querySelector<HTMLElement>("#workout-curre
 const workoutUpcoming = document.querySelector<HTMLElement>("#workout-upcoming");
 const sectionCountdown = document.querySelector<HTMLElement>("#section-countdown");
 const sectionCountdownValue = sectionCountdown?.querySelector<HTMLElement>("strong");
-const sectionCountdownNext = document.querySelector<HTMLElement>("#section-countdown-next");
 const trainingFinishedDialog = document.querySelector<HTMLDialogElement>("#training-finished-dialog");
 const trainingFinishSave = document.querySelector<HTMLButtonElement>("#training-finish-save");
 const trainingContinue = document.querySelector<HTMLButtonElement>("#training-continue");
@@ -322,7 +317,7 @@ if (
   !workoutTotalDuration || !workoutSummary || !workoutEditor || !workoutEditorTitle ||
   !workoutAddStep || !workoutSave || !workoutCancel || !workoutEdit || !workoutDelete || !workoutGuidance ||
   !workoutProgressFill || !workoutCurrentSection || !workoutCurrentTarget || !workoutUpcoming ||
-  !sectionCountdown || !sectionCountdownValue || !sectionCountdownNext ||
+  !sectionCountdown || !sectionCountdownValue ||
   !trainingFinishedDialog || !trainingFinishSave || !trainingContinue
 ) {
   throw new Error("Missing required UI elements.");
@@ -374,7 +369,6 @@ const workoutCurrentTargetElement = workoutCurrentTarget;
 const workoutUpcomingElement = workoutUpcoming;
 const countdownOverlay = sectionCountdown;
 const countdownValue = sectionCountdownValue;
-const countdownNext = sectionCountdownNext;
 const finishedDialog = trainingFinishedDialog;
 const finishAndSaveButton = trainingFinishSave;
 const continueRidingButton = trainingContinue;
@@ -688,12 +682,14 @@ function renderStatsBlock(
   element: HTMLElement,
   durationElement: HTMLElement,
   stats: LiveSessionStats,
+  targetPowerValue?: number | null,
 ): void {
   durationElement.textContent = formatClock(stats.duration);
   element.innerHTML = `
     ${metricRow("Speed", formatSpeed(stats.speed != null ? stats.speed / 3.6 : null))}
     ${metricRow("Distance", formatMeters(stats.distance))}
     ${metricRow("Average power", formatPower(stats.averagePower))}
+    ${targetPowerValue !== undefined ? metricRow("Target power", formatPower(targetPowerValue)) : ""}
     ${metricRow("Normalized power", formatPower(stats.normalizedPower))}
     ${metricRow("Average heart rate", formatHeartRate(stats.averageHeartRate))}
     ${metricRow("Max heart rate", formatHeartRate(stats.maxHeartRate))}
@@ -701,6 +697,8 @@ function renderStatsBlock(
 }
 
 function renderSessionStats(): void {
+  const workout = selectedWorkout();
+  const currentStep = workout?.steps[sessionRecorder.sectionNumber - 1];
   renderStatsBlock(
     overallSessionStatsElement,
     overallStatsDurationLabel,
@@ -710,7 +708,16 @@ function renderSessionStats(): void {
     sectionSessionStatsElement,
     sectionStatsDurationLabel,
     sessionRecorder.currentSectionStats,
+    workout && currentStep ? targetPower(workout.ftp, currentStep.zone) : null,
   );
+}
+
+function structuredSectionElapsed(workout: Workout): number {
+  const sectionIndex = sessionRecorder.sectionNumber - 1;
+  const precedingDuration = workout.steps
+    .slice(0, sectionIndex)
+    .reduce((total, step) => total + step.durationSeconds, 0);
+  return Math.max(0, sessionRecorder.timerSeconds - precedingDuration);
 }
 
 function renderWorkoutProgress(): void {
@@ -722,7 +729,7 @@ function renderWorkoutProgress(): void {
   workoutGuidanceElement.classList.toggle("hidden", !workout || !step || !active);
   if (!workout || !step || !active) return;
 
-  const elapsed = Math.min(step.durationSeconds, sessionRecorder.currentSectionStats.duration);
+  const elapsed = Math.min(step.durationSeconds, structuredSectionElapsed(workout));
   const remaining = Math.max(0, step.durationSeconds - elapsed);
   const progress = step.durationSeconds > 0 ? (elapsed / step.durationSeconds) * 100 : 100;
   workoutProgressFillElement.style.width = `${progress}%`;
@@ -901,7 +908,8 @@ async function finishSession(): Promise<void> {
   finishingPromptOpen = false;
   const recorded = sessionRecorder.stop();
   if (!recorded) return;
-  sessionTimerLabel.textContent = formatClock(recorded.totalTimerTime);
+  sessionRecorder.reset();
+  sessionTimerLabel.textContent = "00:00:00";
   updateSessionControls();
   renderSessionStats();
   const name = activityFileName(recorded.startedAt, trainingName);
@@ -957,13 +965,9 @@ window.setInterval(() => {
     countdownOverlay.classList.add("hidden");
     return;
   }
-  const remaining = step.durationSeconds - sessionRecorder.currentSectionStats.duration;
+  const remaining = step.durationSeconds - structuredSectionElapsed(workout);
   if (remaining <= 10) {
     const second = Math.max(0, Math.ceil(remaining));
-    const nextStep = workout.steps[sessionRecorder.sectionNumber];
-    countdownNext.textContent = nextStep
-      ? `Next: Zone ${nextStep.zone} · ${targetPower(workout.ftp, nextStep.zone)} W · ${formatMinutesAndSeconds(nextStep.durationSeconds)}`
-      : "End of training";
     countdownOverlay.classList.remove("hidden");
     if (second !== countdownSecond) {
       countdownSecond = second;
@@ -977,23 +981,20 @@ window.setInterval(() => {
   }
   if (remaining <= 0 && !sectionTransitioning) {
     sectionTransitioning = true;
-    window.setTimeout(() => {
-      if (sessionRecorder.state !== "running") { sectionTransitioning = false; return; }
-      if (sessionRecorder.sectionNumber < workout.steps.length) {
-        sessionRecorder.nextSection();
-        countdownSecond = null;
-        sectionTransitioning = false;
-        updateSessionControls();
-        renderSessionStats();
-      } else {
-        sessionRecorder.pause();
-        countdownOverlay.classList.add("hidden");
-        finishingPromptOpen = true;
-        updateSessionControls();
-        renderSessionStats();
-        finishedDialog.showModal();
-      }
-    }, 600);
+    if (sessionRecorder.sectionNumber < workout.steps.length) {
+      sessionRecorder.nextSection();
+      countdownSecond = null;
+      sectionTransitioning = false;
+      updateSessionControls();
+      renderSessionStats();
+    } else {
+      sessionRecorder.pause();
+      countdownOverlay.classList.add("hidden");
+      finishingPromptOpen = true;
+      updateSessionControls();
+      renderSessionStats();
+      finishedDialog.showModal();
+    }
   }
 }, 250);
 

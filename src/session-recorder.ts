@@ -162,6 +162,17 @@ export class SessionRecorder {
     };
   }
 
+  reset(): void {
+    if (this.state !== "stopped") return;
+    this.startedAt = 0;
+    this.activeStartedAt = 0;
+    this.activeBeforeCurrentRun = 0;
+    this.distance = 0;
+    this.records = [];
+    this.events = [];
+    this.sectionStarts = [];
+  }
+
   get elapsedSeconds(): number {
     return this.state === "stopped" ? 0 : (Date.now() - this.startedAt) / 1000;
   }
