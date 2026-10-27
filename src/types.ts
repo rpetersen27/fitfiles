@@ -49,6 +49,7 @@ export interface Stats {
   totalTimerTime: number | null;
   avgHeartRate: number | null;
   maxHeartRate: number | null;
+  normalizedHeartRate: number | null;
   totalDistance: number | null;
   avgSpeed: number | null;
   avgPower: number | null;

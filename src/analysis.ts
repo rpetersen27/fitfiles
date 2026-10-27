@@ -30,6 +30,7 @@ function emptyStats(): Stats {
     totalTimerTime: null,
     avgHeartRate: null,
     maxHeartRate: null,
+    normalizedHeartRate: null,
     totalDistance: null,
     avgSpeed: null,
     avgPower: null,
@@ -264,6 +265,96 @@ function calculateNormalizedPower(records: FitRecord[]): number | null {
   return totalDuration > 0 ? (fourthPowerSum / totalDuration) ** 0.25 : null;
 }
 
+const HEART_RATE_WEIGHT_EXPONENT = 6;
+const HEART_RATE_LOWER_PERCENTILE = 0.05;
+const HEART_RATE_UPPER_PERCENTILE = 0.99;
+
+export interface HeartRateSample {
+  heartRate: number;
+  duration: number;
+}
+
+function weightedPercentile(
+  sortedSamples: HeartRateSample[],
+  totalDuration: number,
+  percentile: number
+): number {
+  const target = totalDuration * percentile;
+  let cumulative = 0;
+
+  for (const sample of sortedSamples) {
+    cumulative += sample.duration;
+    if (cumulative >= target) {
+      return sample.heartRate;
+    }
+  }
+
+  return sortedSamples.at(-1)?.heartRate ?? 0;
+}
+
+/**
+ * Normalized heart rate is a power mean of the heart rate, measured on the
+ * activity's own scale: P5 maps to 0 and P99 to 1, so warm-up and strap
+ * glitches do not stretch the scale. With a high exponent, time spent near
+ * the top dominates, so the gap to the average grows with spikes.
+ */
+export function calculateNormalizedHeartRate(samples: HeartRateSample[]): number | null {
+  const validSamples = samples.filter(
+    (sample) =>
+      !Number.isNaN(sample.heartRate) &&
+      !Number.isNaN(sample.duration) &&
+      sample.heartRate > 0 &&
+      sample.duration > 0
+  );
+  const totalDuration = validSamples.reduce((sum, sample) => sum + sample.duration, 0);
+
+  if (totalDuration <= 0) {
+    return null;
+  }
+
+  const sortedSamples = [...validSamples].sort((a, b) => a.heartRate - b.heartRate);
+  const lower = weightedPercentile(sortedSamples, totalDuration, HEART_RATE_LOWER_PERCENTILE);
+  const upper = weightedPercentile(sortedSamples, totalDuration, HEART_RATE_UPPER_PERCENTILE);
+  const range = upper - lower;
+
+  if (range <= 0) {
+    return lower;
+  }
+
+  let weightedSum = 0;
+  for (const sample of validSamples) {
+    const position = Math.min(1, Math.max(0, (sample.heartRate - lower) / range));
+    weightedSum += position ** HEART_RATE_WEIGHT_EXPONENT * sample.duration;
+  }
+
+  return lower + range * (weightedSum / totalDuration) ** (1 / HEART_RATE_WEIGHT_EXPONENT);
+}
+
+function heartRateSamplesFromRecords(records: FitRecord[]): HeartRateSample[] {
+  const samples: HeartRateSample[] = [];
+
+  for (let index = 0; index < records.length - 1; index += 1) {
+    const current = records[index];
+    const next = records[index + 1];
+
+    if (
+      current?.heart_rate == null ||
+      current.timer_time == null ||
+      next?.timer_time == null ||
+      next.timer_time <= current.timer_time
+    ) {
+      continue;
+    }
+
+    samples.push({
+      heartRate: current.heart_rate,
+      duration: next.timer_time - current.timer_time
+    });
+  }
+
+  return samples;
+}
+
 function buildStatsFromRecords(records: FitRecord[]): Stats | null {
   if (records.length === 0) {
     return null;
@@ -295,6 +386,7 @@ function buildStatsFromRecords(records: FitRecord[]): Stats | null {
     totalTimerTime: timerTime,
     avgHeartRate: averageValue(records, "heart_rate", "timer_time"),
     maxHeartRate: maxValue(records, "heart_rate"),
+    normalizedHeartRate: calculateNormalizedHeartRate(heartRateSamplesFromRecords(records)),
     totalDistance: distance,
     avgSpeed:
       timerTime != null && timerTime > 0 && distance != null
@@ -446,6 +538,7 @@ function mergeStats(primary: Stats | null, fallback: Stats | null): Stats | null
     totalTimerTime: primary.totalTimerTime ?? fallback.totalTimerTime,
     avgHeartRate: primary.avgHeartRate ?? fallback.avgHeartRate,
     maxHeartRate: primary.maxHeartRate ?? fallback.maxHeartRate,
+    normalizedHeartRate: primary.normalizedHeartRate ?? fallback.normalizedHeartRate,
     totalDistance: primary.totalDistance ?? fallback.totalDistance,
     avgSpeed: primary.avgSpeed ?? fallback.avgSpeed,
     avgPower: primary.avgPower ?? fallback.avgPower,

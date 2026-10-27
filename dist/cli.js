@@ -10,6 +10,7 @@ function printBlock(title, stats, options = {}) {
     console.log(`  Complete duration: ${formatDuration(stats.totalElapsedTime)}`);
     console.log(`  Active duration:   ${formatDuration(stats.totalTimerTime)}`);
     console.log(`  Average HF:        ${formatHeartRate(stats.avgHeartRate)}`);
+    console.log(`  Normalized HF:     ${formatHeartRate(stats.normalizedHeartRate)}`);
     console.log(`  Max HF:            ${formatHeartRate(stats.maxHeartRate)}`);
     if (includeHeartRateDiffAfterOneMinute) {
         console.log(`  HF Δ (60 s):       ${formatHeartRateDifference(stats.heartRateDiffAfterOneMinute)}`);

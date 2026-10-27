@@ -1,3 +1,4 @@
+import { calculateNormalizedHeartRate } from "./analysis.js";
 import type { TrainingReading } from "./training-device.js";
 
 export type SessionState = "stopped" | "running" | "paused";
@@ -33,6 +34,7 @@ export interface LiveSessionStats {
   normalizedPower: number | null;
   averageHeartRate: number | null;
   maxHeartRate: number | null;
+  normalizedHeartRate: number | null;
 }
 
 function average(values: number[]): number | null {
@@ -83,6 +85,9 @@ function summarizeRecords(
     normalizedPower: calculateNormalizedPower(records),
     averageHeartRate: average(heartRates),
     maxHeartRate: heartRates.length > 0 ? Math.max(...heartRates) : null,
+    normalizedHeartRate: calculateNormalizedHeartRate(
+      heartRates.map((heartRate) => ({ heartRate, duration: 1 })),
+    ),
   };
 }
 

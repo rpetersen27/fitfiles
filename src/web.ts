@@ -208,6 +208,23 @@ app.innerHTML = `
       <button id="training-continue" class="disconnect-device-button" type="button">Continue riding</button>
     </div>
   </dialog>
+  <dialog id="normalized-hf-dialog" class="training-finished-dialog info-dialog">
+    <p class="eyebrow">Metric explained</p>
+    <h2>Normalized HF</h2>
+    <p>Average HF smooths out spikes: a steady ride at 140 bpm and an interval session can end up with the same average. Normalized HF weights time spent at high heart rates much more heavily, similar to Normalized Power for watts.</p>
+    <p><strong>How it is calculated</strong></p>
+    <ol>
+      <li>The activity's own heart rate range is determined: the 5th percentile is the bottom, the 99th percentile the top. Warm-up and single strap glitches therefore do not stretch the scale.</li>
+      <li>Every second is placed on that scale between 0 and 1 and raised to the 6th power, so values near the top count far more.</li>
+      <li>These values are averaged over time, the 6th root is taken and the result is mapped back to bpm.</li>
+    </ol>
+    <p><strong>How to read it</strong></p>
+    <p>Close to Average HF means a steady effort. The bigger the gap, the more time you spent in spikes. Example: 10 × (1 min at 170 / 5 min at 133) averages 139 bpm, but gives a Normalized HF of 160 bpm. A steady ride at 140 bpm stays at about 140 to 142.</p>
+    <p>The value is relative to this activity's own range, not to your max HR. It shows how much time was spent near the top, not how many spikes there were.</p>
+    <form method="dialog" class="session-controls">
+      <button class="connect-device-button" type="submit">Got it</button>
+    </form>
+  </dialog>
 `;
 
 const trainingSessionPanel =
@@ -846,6 +863,7 @@ function renderStatsBlock(
     ${metricRow("Average power", powerDisplay)}
     ${metricRow("Normalized power", formatPower(stats.normalizedPower))}
     ${metricRow("Average heart rate", formatHeartRate(stats.averageHeartRate))}
+    ${metricRow("Normalized heart rate", formatHeartRate(stats.normalizedHeartRate), "normalized-hf-dialog")}
     ${metricRow("Max heart rate", formatHeartRate(stats.maxHeartRate))}
   `;
 }
@@ -1495,9 +1513,19 @@ function viewFromHash(): ViewName {
 window.addEventListener("hashchange", () => showView(viewFromHash()));
 showView(viewFromHash());
 
-function metricRow(label: string, value: string): string {
-  return `<div class="metric"><dt>${label}</dt><dd>${value}</dd></div>`;
+function metricRow(label: string, value: string, infoDialogId?: string): string {
+  const info = infoDialogId
+    ? ` <button class="metric-info" type="button" data-dialog="${infoDialogId}" aria-label="What is ${label}?">i</button>`
+    : "";
+  return `<div class="metric"><dt>${label}${info}</dt><dd>${value}</dd></div>`;
 }
+
+document.addEventListener("click", (event) => {
+  const button = (event.target as Element | null)?.closest<HTMLButtonElement>(".metric-info");
+  const dialogId = button?.dataset.dialog;
+  if (!dialogId) return;
+  document.querySelector<HTMLDialogElement>(`#${dialogId}`)?.showModal();
+});
 
 function renderStats(
   stats: Stats,
@@ -1510,6 +1538,7 @@ function renderStats(
       ${metricRow("Complete duration", formatDuration(stats.totalElapsedTime))}
       ${metricRow("Active duration", formatDuration(stats.totalTimerTime))}
       ${metricRow("Average HF", formatHeartRate(stats.avgHeartRate))}
+      ${metricRow("Normalized HF", formatHeartRate(stats.normalizedHeartRate), "normalized-hf-dialog")}
       ${metricRow("Max HF", formatHeartRate(stats.maxHeartRate))}
       ${includeSectionMetrics ? metricRow("HF Δ (60 s)", formatHeartRateDifference(stats.heartRateDiffAfterOneMinute)) : ""}
       ${includeSectionMetrics ? metricRow("Efficiency", formatEfficiency(stats.efficiency)) : ""}

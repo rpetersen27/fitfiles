@@ -14,6 +14,7 @@ Overall and per section:
 - Complete duration
 - Active duration
 - Average HF
+- Normalized HF (power mean with exponent 6 on the activity's own P5–P99 HF scale; the gap to Average HF grows with time spent near the top)
 - Max HF
 - Distance
 - Average Speed
