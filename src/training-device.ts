@@ -11,8 +11,11 @@ export interface TrainingDeviceCallbacks {
   onConnecting?: (device: TrainingBluetoothDevice) => void;
   onReading: (reading: TrainingReading) => void;
   onCapabilitiesChanged: (capabilities: Set<TrainingMetric>) => void;
-  onDisconnected: () => void;
+  onConnectionLost: () => void;
+  onReconnected: () => void;
 }
+
+type ConnectionState = "connecting" | "connected" | "reconnecting" | "closed";
 
 const SERVICES = [
   "heart_rate",
@@ -21,6 +24,9 @@ const SERVICES = [
   "fitness_machine"
 ];
 const LOG_PREFIX = "[FIT Bluetooth]";
+const CONNECT_TIMEOUT_MS = 15_000;
+const RECONNECT_BASE_DELAY_MS = 1_000;
+const RECONNECT_MAX_DELAY_MS = 10_000;
 
 interface RevolutionSample {
   revolutions: number;
@@ -48,9 +54,23 @@ function speed(
   return time > 0 ? (revolutions * circumference * frequency * 3.6) / time : null;
 }
 
+function withTimeout<T>(promise: Promise<T>, milliseconds: number, message: string): Promise<T> {
+  let timer: number | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = window.setTimeout(() => reject(new Error(message)), milliseconds);
+  });
+  return Promise.race([promise, timeout]).finally(() => window.clearTimeout(timer));
+}
+
 export class TrainingBluetoothDevice {
   private readonly capabilities = new Set<TrainingMetric>();
-  private readonly characteristics: BluetoothRemoteGATTCharacteristic[] = [];
+  private readonly subscriptions: Array<{
+    characteristic: BluetoothRemoteGATTCharacteristic;
+    listener: (event: Event) => void;
+  }> = [];
+  private state: ConnectionState = "connecting";
+  private reconnectAttempt = 0;
+  private reconnectTimer: number | null = null;
   private previousWheel: RevolutionSample | null = null;
   private previousCrank: RevolutionSample | null = null;
 
@@ -108,7 +128,13 @@ export class TrainingBluetoothDevice {
       getWheelCircumferenceMeters
     );
     callbacks.onConnecting?.(trainingDevice);
-    await trainingDevice.connect();
+    try {
+      await trainingDevice.connect();
+    } catch (error) {
+      trainingDevice.disconnect();
+      throw error;
+    }
+    trainingDevice.state = "connected";
     console.info(LOG_PREFIX, "Device connection ready", {
       id: device.id,
       name: device.name,
@@ -133,17 +159,37 @@ export class TrainingBluetoothDevice {
     return new Set(this.capabilities);
   }
 
+  get reconnecting(): boolean {
+    return this.state === "reconnecting";
+  }
+
   disconnect(): void {
     console.info(LOG_PREFIX, "Disconnect requested", { id: this.id, name: this.name });
+    this.state = "closed";
+    if (this.reconnectTimer != null) window.clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
+    this.device.removeEventListener("gattserverdisconnected", this.handleDisconnect);
     this.device.gatt?.disconnect();
-    this.cleanUp();
+    this.resetSubscriptions();
   }
 
   private async connect(): Promise<void> {
-    if (!this.device.gatt) throw new Error("The selected device has no Bluetooth GATT server.");
+    const gatt = this.device.gatt;
+    if (!gatt) throw new Error("The selected device has no Bluetooth GATT server.");
     this.device.addEventListener("gattserverdisconnected", this.handleDisconnect);
     console.info(LOG_PREFIX, "Connecting GATT server", { id: this.id, name: this.name });
-    const server = await this.device.gatt.connect();
+    let server: BluetoothRemoteGATTServer;
+    try {
+      server = await withTimeout(
+        gatt.connect(),
+        CONNECT_TIMEOUT_MS,
+        "The Bluetooth device did not respond in time."
+      );
+    } catch (error) {
+      // Abort a connection attempt that is still pending in the browser.
+      gatt.disconnect();
+      throw error;
+    }
     console.info(LOG_PREFIX, "GATT server connected", { id: this.id, name: this.name });
 
     // Keep GATT discovery sequential; several trainers reject overlapping GATT operations.
@@ -164,12 +210,12 @@ export class TrainingBluetoothDevice {
       await this.subscribe(server, "fitness_machine", "indoor_bike_data", this.parseIndoorBikeData)
     ];
 
+    if (!server.connected) throw new Error("The Bluetooth device disconnected during setup.");
     if (!subscriptions.some(Boolean)) {
       console.error(LOG_PREFIX, "No supported measurement characteristics found", {
         id: this.id,
         name: this.name
       });
-      this.disconnect();
       throw new Error("No supported live measurement characteristic was found.");
     }
   }
@@ -188,8 +234,8 @@ export class TrainingBluetoothDevice {
         if (source?.value) handler(source.value);
       };
       characteristic.addEventListener("characteristicvaluechanged", listener);
+      this.subscriptions.push({ characteristic, listener });
       await characteristic.startNotifications();
-      this.characteristics.push(characteristic);
       console.info(LOG_PREFIX, "Subscribed to measurement", {
         id: this.id,
         service: serviceName,
@@ -337,14 +383,63 @@ export class TrainingBluetoothDevice {
   };
 
   private readonly handleDisconnect = (): void => {
-    console.warn(LOG_PREFIX, "GATT server disconnected", { id: this.id, name: this.name });
-    this.cleanUp();
-    this.callbacks.onDisconnected();
+    console.warn(LOG_PREFIX, "GATT server disconnected", {
+      id: this.id,
+      name: this.name,
+      state: this.state
+    });
+    // Failed setup and reconnect attempts handle their own errors.
+    if (this.state !== "connected") return;
+    this.state = "reconnecting";
+    this.resetSubscriptions();
+    this.callbacks.onConnectionLost();
+    this.scheduleReconnect();
   };
 
-  private cleanUp(): void {
-    this.device.removeEventListener("gattserverdisconnected", this.handleDisconnect);
-    this.characteristics.length = 0;
+  private scheduleReconnect(): void {
+    if (this.state !== "reconnecting" || this.reconnectTimer != null) return;
+    const delay = Math.min(
+      RECONNECT_MAX_DELAY_MS,
+      RECONNECT_BASE_DELAY_MS * 2 ** this.reconnectAttempt
+    );
+    this.reconnectAttempt += 1;
+    console.info(LOG_PREFIX, "Reconnect scheduled", {
+      id: this.id,
+      attempt: this.reconnectAttempt,
+      delay
+    });
+    this.reconnectTimer = window.setTimeout(() => {
+      this.reconnectTimer = null;
+      void this.reconnect();
+    }, delay);
+  }
+
+  private async reconnect(): Promise<void> {
+    if (this.state !== "reconnecting") return;
+    try {
+      // Reuses the authorized BluetoothDevice, so no user gesture or chooser is required.
+      await this.connect();
+      if (this.state !== "reconnecting") {
+        this.device.gatt?.disconnect();
+        return;
+      }
+      this.state = "connected";
+      this.reconnectAttempt = 0;
+      console.info(LOG_PREFIX, "Device reconnected", { id: this.id, name: this.name });
+      this.callbacks.onReconnected();
+    } catch (error) {
+      console.warn(LOG_PREFIX, "Reconnect attempt failed", { id: this.id, error });
+      this.device.gatt?.disconnect();
+      this.resetSubscriptions();
+      this.scheduleReconnect();
+    }
+  }
+
+  private resetSubscriptions(): void {
+    for (const { characteristic, listener } of this.subscriptions) {
+      characteristic.removeEventListener("characteristicvaluechanged", listener);
+    }
+    this.subscriptions.length = 0;
     this.previousWheel = null;
     this.previousCrank = null;
   }

@@ -1,3 +1,5 @@
+import type { RecordedSession } from "./session-recorder.js";
+
 export interface StoredActivity {
   id: string;
   name: string;
@@ -9,11 +11,26 @@ export interface StoredActivity {
 
 const DATABASE_NAME = "fitfiles-training";
 const STORE_NAME = "activities";
+const CHECKPOINT_STORE_NAME = "session-checkpoint";
+const CHECKPOINT_KEY = "current";
+
+export interface SessionCheckpoint {
+  name: string;
+  session: RecordedSession;
+}
 
 function openDatabase(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DATABASE_NAME, 1);
-    request.onupgradeneeded = () => request.result.createObjectStore(STORE_NAME, { keyPath: "id" });
+    const request = indexedDB.open(DATABASE_NAME, 2);
+    request.onupgradeneeded = () => {
+      const database = request.result;
+      if (!database.objectStoreNames.contains(STORE_NAME)) {
+        database.createObjectStore(STORE_NAME, { keyPath: "id" });
+      }
+      if (!database.objectStoreNames.contains(CHECKPOINT_STORE_NAME)) {
+        database.createObjectStore(CHECKPOINT_STORE_NAME);
+      }
+    };
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error ?? new Error("Could not open activity storage."));
   });
@@ -57,6 +74,42 @@ export async function deleteActivity(id: string): Promise<void> {
     transaction.objectStore(STORE_NAME).delete(id);
     transaction.oncomplete = () => resolve();
     transaction.onerror = () => reject(transaction.error ?? new Error("Could not delete activity."));
+  });
+  database.close();
+}
+
+export async function saveSessionCheckpoint(checkpoint: SessionCheckpoint): Promise<void> {
+  const database = await openDatabase();
+  await new Promise<void>((resolve, reject) => {
+    const transaction = database.transaction(CHECKPOINT_STORE_NAME, "readwrite");
+    transaction.objectStore(CHECKPOINT_STORE_NAME).put(checkpoint, CHECKPOINT_KEY);
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error ?? new Error("Could not save session checkpoint."));
+  });
+  database.close();
+}
+
+export async function loadSessionCheckpoint(): Promise<SessionCheckpoint | null> {
+  const database = await openDatabase();
+  const checkpoint = await new Promise<SessionCheckpoint | null>((resolve, reject) => {
+    const request = database
+      .transaction(CHECKPOINT_STORE_NAME)
+      .objectStore(CHECKPOINT_STORE_NAME)
+      .get(CHECKPOINT_KEY);
+    request.onsuccess = () => resolve((request.result as SessionCheckpoint | undefined) ?? null);
+    request.onerror = () => reject(request.error ?? new Error("Could not load session checkpoint."));
+  });
+  database.close();
+  return checkpoint;
+}
+
+export async function clearSessionCheckpoint(): Promise<void> {
+  const database = await openDatabase();
+  await new Promise<void>((resolve, reject) => {
+    const transaction = database.transaction(CHECKPOINT_STORE_NAME, "readwrite");
+    transaction.objectStore(CHECKPOINT_STORE_NAME).delete(CHECKPOINT_KEY);
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error ?? new Error("Could not clear session checkpoint."));
   });
   database.close();
 }

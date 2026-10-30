@@ -985,3 +985,28 @@ h1 {
     width: fit-content;
   }
 }
+
+.setup-status {
+  padding: 10px 14px;
+  border-radius: 14px;
+  color: var(--muted);
+  background: var(--line);
+  font-weight: 700;
+}
+
+.setup-status.available {
+  color: var(--accent-strong);
+  background: rgba(14, 124, 102, 0.12);
+}
+
+.setup-command {
+  margin: 0;
+  padding: 12px 14px;
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  font-size: 0.8rem;
+  white-space: pre-wrap;
+  word-break: break-all;
+  user-select: all;
+}

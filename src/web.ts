@@ -1,9 +1,12 @@
 import { analyzeFitData } from "./analysis.js";
 import {
+  clearSessionCheckpoint,
   deleteActivity,
   listActivities,
+  loadSessionCheckpoint,
   saveActivity,
   saveActivityIfNew,
+  saveSessionCheckpoint,
   type StoredActivity,
 } from "./activity-store.js";
 import {
@@ -18,7 +21,11 @@ import {
 } from "./format.js";
 import { parseFit } from "./fit.js";
 import { createFitFile } from "./fit-writer.js";
-import { SessionRecorder, type LiveSessionStats } from "./session-recorder.js";
+import {
+  SessionRecorder,
+  type LiveSessionStats,
+  type RecordedSession,
+} from "./session-recorder.js";
 import {
   TrainingBluetoothDevice,
   type TrainingMetric,
@@ -89,7 +96,10 @@ app.innerHTML = `
           <h2>Connect your training sensors.</h2>
           <p id="bluetooth-status" class="status" role="status">Choose a device to discover its live data.</p>
         </div>
-        <button id="bluetooth-connect" class="connect-device-button" type="button">Connect Bluetooth sensor</button>
+        <div class="device-actions">
+          <button id="bluetooth-connect" class="connect-device-button" type="button">Connect Bluetooth sensor</button>
+          <button class="disconnect-device-button" type="button" data-dialog="bluetooth-setup-dialog">Auto-reconnect setup</button>
+        </div>
         <div id="connected-devices" class="connected-devices">
           <p class="empty-devices">No devices connected.</p>
         </div>
@@ -221,6 +231,35 @@ app.innerHTML = `
     <p><strong>How to read it</strong></p>
     <p>Close to Average HF means a steady effort. The bigger the gap, the more time you spent in spikes. Example: 10 × (1 min at 170 / 5 min at 133) averages 139 bpm, but gives a Normalized HF of 160 bpm. A steady ride at 140 bpm stays at about 140 to 142.</p>
     <p>The value is relative to this activity's own range, not to your max HR. It shows how much time was spent near the top, not how many spikes there were.</p>
+    <form method="dialog" class="session-controls">
+      <button class="connect-device-button" type="submit">Got it</button>
+    </form>
+  </dialog>
+  <dialog id="bluetooth-setup-dialog" class="training-finished-dialog info-dialog">
+    <p class="eyebrow">Bluetooth in Chrome</p>
+    <h2>Automatic reconnect</h2>
+    <p id="bluetooth-setup-status" class="setup-status"></p>
+    <p><strong>What works without any setup</strong></p>
+    <p>While this tab stays open, a sensor that drops out during a ride is reconnected automatically. Values from a sensor that stops sending are not recorded, so dropouts show up as gaps instead of frozen numbers. A running session is checkpointed every 15 seconds and recovered after a crash or reload.</p>
+    <p><strong>What needs Chrome flags</strong></p>
+    <p>Restoring remembered sensors after a reload or a Chrome restart needs <code>navigator.bluetooth.getDevices()</code>. Chrome still ships it behind a flag, so without it you have to pick your sensors again after every reload.</p>
+    <ol>
+      <li>Open <code>chrome://flags/#enable-web-bluetooth-new-permissions-backend</code> (copy it into the address bar, web pages cannot link to it) and set it to <em>Enabled</em>.</li>
+      <li>Relaunch Chrome and reload this page. The status line at the top of this dialog should now say that restoring is available.</li>
+      <li>Only if it still says unavailable: also enable <code>chrome://flags/#enable-experimental-web-platform-features</code> and relaunch again.</li>
+      <li>Connect each sensor once more with <em>Connect Bluetooth sensor</em>. Permissions granted before the flag was enabled are not kept.</li>
+      <li>On macOS, check that Chrome is allowed under System Settings → Privacy &amp; Security → Bluetooth.</li>
+    </ol>
+    <p><strong>Risks</strong></p>
+    <ol>
+      <li><em>Persistent permissions flag (low risk):</em> a site keeps access to the sensors you picked for that site and can reconnect to them while it is open, without showing the chooser again. It cannot see or connect to any other device, and other sites gain nothing. Revoke access through the site info icon in the address bar → Site settings → Reset permissions.</li>
+      <li><em>Experimental web platform features (higher risk):</em> turns on every unfinished web API for every site you visit. That means more attack surface, features without final security review and occasional crashes. Avoid it in your everyday browser.</li>
+      <li>Flags are experimental: Chrome may change or remove them with any update, and some reset after updates.</li>
+    </ol>
+    <p><strong>Limit it to this site</strong></p>
+    <p>Flags cannot be scoped to single sites, and they apply to all Chrome profiles at once. To keep your everyday browser untouched, start a separate Chrome instance with its own data folder that only you use for training:</p>
+    <pre class="setup-command"><code id="bluetooth-setup-command"></code></pre>
+    <p>Your normal Chrome keeps its default flags. If the restore status stays unavailable in that instance, add <code>--enable-experimental-web-platform-features</code> to the command; the risk then stays limited to this one training window.</p>
     <form method="dialog" class="session-controls">
       <button class="connect-device-button" type="submit">Got it</button>
     </form>
@@ -447,13 +486,26 @@ const deviceCapabilities = new Map<string, Set<TrainingMetric>>();
 const connectingDevices = new Set<string>();
 const deviceReadings = new Map<
   string,
-  Partial<Record<TrainingMetric, { value: number; sequence: number }>>
+  Partial<Record<TrainingMetric, StoredReading>>
 >();
 const powerSamplesByDevice = new Map<
   string,
   Array<{ timestamp: number; value: number }>
 >();
 let readingSequence = 0;
+// Older values count as missing, so a silent sensor leaves gaps instead of frozen values.
+const READING_MAX_AGE_MS = 3_000;
+const reconnectingDevices = new Set<string>();
+
+interface StoredReading {
+  value: number;
+  sequence: number;
+  receivedAt: number;
+}
+
+function isFresh(reading: StoredReading, now = Date.now()): boolean {
+  return now - reading.receivedAt <= READING_MAX_AGE_MS;
+}
 const ACTIVE_DEVICES_KEY = "fitfiles.activeBluetoothDevices";
 const BLUETOOTH_LOG_PREFIX = "[FIT Bluetooth]";
 
@@ -532,12 +584,17 @@ const metricLabels: Record<TrainingMetric, string> = {
 };
 
 function getLatestReadings(): TrainingReading {
-  const latest = new Map<TrainingMetric, { value: number; sequence: number }>();
+  const latest = new Map<TrainingMetric, StoredReading>();
+  const now = Date.now();
   for (const readings of deviceReadings.values()) {
     for (const metric of Object.keys(readings) as TrainingMetric[]) {
       const candidate = readings[metric];
       const current = latest.get(metric);
-      if (candidate && (!current || candidate.sequence > current.sequence)) {
+      if (
+        candidate &&
+        isFresh(candidate, now) &&
+        (!current || candidate.sequence > current.sequence)
+      ) {
         latest.set(metric, candidate);
       }
     }
@@ -559,7 +616,11 @@ function latestPowerDeviceId(): string | null {
   let latest: { id: string; sequence: number } | null = null;
   for (const [id, readings] of deviceReadings) {
     const power = readings.power;
-    if (power && (!latest || power.sequence > latest.sequence)) {
+    if (
+      power &&
+      isFresh(power) &&
+      (!latest || power.sequence > latest.sequence)
+    ) {
       latest = { id, sequence: power.sequence };
     }
   }
@@ -606,10 +667,17 @@ function storeDeviceReading(deviceId: string, reading: TrainingReading): void {
   }
   for (const metric of Object.keys(reading) as TrainingMetric[]) {
     const value = reading[metric];
-    if (value != null) stored[metric] = { value, sequence: ++readingSequence };
+    if (value != null) {
+      stored[metric] = {
+        value,
+        sequence: ++readingSequence,
+        receivedAt: Date.now(),
+      };
+    }
   }
   deviceReadings.set(deviceId, stored);
   renderDashboard();
+  sessionRecorder.tick();
 }
 
 const sessionRecorder = new SessionRecorder(getLatestReadings);
@@ -943,6 +1011,7 @@ function updateSessionControls(): void {
   workoutEditButton.disabled = !workout || running || paused;
   workoutDeleteButton.disabled = !workout || running || paused;
   renderWorkoutProgress();
+  void updateWakeLock();
 }
 
 function activityFileName(startedAt: number, trainingName: string): string {
@@ -1071,6 +1140,7 @@ sessionStartButton.addEventListener("click", () => {
 });
 sessionPauseButton.addEventListener("click", () => {
   sessionRecorder.pause();
+  checkpointSession();
   updateSessionControls();
   renderSessionStats();
 });
@@ -1095,6 +1165,18 @@ async function finishSession(): Promise<void> {
   sessionTimerLabel.textContent = "00:00:00";
   updateSessionControls();
   renderSessionStats();
+  const saved = await saveRecordedSession(recorded, trainingName);
+  if (saved) void queueCheckpointTask(clearSessionCheckpoint);
+  else {
+    sessionStateLabel.textContent =
+      "The session stopped, but its FIT file could not be saved.";
+  }
+}
+
+async function saveRecordedSession(
+  recorded: RecordedSession,
+  trainingName: string,
+): Promise<boolean> {
   const name = activityFileName(recorded.startedAt, trainingName);
   busyActivities.set(recorded.id, { name, startedAt: recorded.startedAt });
   renderActivities();
@@ -1110,16 +1192,101 @@ async function finishSession(): Promise<void> {
       fingerprint: await fingerprintBlob(blob),
     };
     await saveActivity(activity);
-    savedActivities = [activity, ...savedActivities];
+    savedActivities = [
+      activity,
+      ...savedActivities.filter((stored) => stored.id !== activity.id),
+    ];
+    return true;
   } catch (error) {
     console.error("Could not create FIT file", error);
-    sessionStateLabel.textContent =
-      "The session stopped, but its FIT file could not be saved.";
+    return false;
   } finally {
     busyActivities.delete(recorded.id);
     renderActivities();
   }
 }
+
+const CHECKPOINT_INTERVAL_MS = 15_000;
+let lastCheckpointAt = 0;
+let checkpointQueue: Promise<void> = Promise.resolve();
+
+// Serializes checkpoint writes so a late save cannot resurrect a cleared checkpoint.
+function queueCheckpointTask(task: () => Promise<void>): Promise<void> {
+  checkpointQueue = checkpointQueue
+    .then(task)
+    .catch((error) => console.error("Could not update session checkpoint", error));
+  return checkpointQueue;
+}
+
+function checkpointSession(): void {
+  const session = sessionRecorder.snapshot();
+  if (!session) return;
+  lastCheckpointAt = Date.now();
+  const name = selectedWorkout()?.name ?? "Free ride";
+  void queueCheckpointTask(() => saveSessionCheckpoint({ name, session }));
+}
+
+async function recoverUnfinishedSession(): Promise<void> {
+  const checkpoint = await loadSessionCheckpoint();
+  if (!checkpoint) return;
+  const { session, name } = checkpoint;
+  console.info("Recovering unfinished session", {
+    id: session.id,
+    records: session.records.length,
+  });
+  if (
+    session.records.length > 0 &&
+    !savedActivities.some((activity) => activity.id === session.id)
+  ) {
+    if (!(await saveRecordedSession(session, name))) return;
+    if (sessionRecorder.state === "stopped") {
+      sessionStateLabel.textContent = `Recovered an unfinished session from ${new Date(session.startedAt).toLocaleString()} and saved it to your FIT files.`;
+    }
+  }
+  await queueCheckpointTask(clearSessionCheckpoint);
+}
+
+let wakeLock: WakeLockSentinel | null = null;
+let wakeLockPending = false;
+
+// Keeps the display, and with it Bluetooth on most laptops, awake during a session.
+async function updateWakeLock(): Promise<void> {
+  if (sessionRecorder.state === "stopped") {
+    const lock = wakeLock;
+    wakeLock = null;
+    await lock?.release().catch(() => undefined);
+    return;
+  }
+  if (
+    wakeLock ||
+    wakeLockPending ||
+    document.visibilityState !== "visible" ||
+    !("wakeLock" in navigator)
+  )
+    return;
+  wakeLockPending = true;
+  try {
+    const lock = await navigator.wakeLock.request("screen");
+    lock.addEventListener("release", () => {
+      if (wakeLock === lock) wakeLock = null;
+    });
+    wakeLock = lock;
+    // Releases the lock again if the session stopped while it was requested.
+    void updateWakeLock();
+  } catch (error) {
+    console.warn("Could not keep the screen awake", error);
+  } finally {
+    wakeLockPending = false;
+  }
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") void updateWakeLock();
+  else if (sessionRecorder.state !== "stopped") checkpointSession();
+});
+window.addEventListener("pagehide", () => {
+  if (sessionRecorder.state !== "stopped") checkpointSession();
+});
 
 sessionStopButton.addEventListener("click", () => void finishSession());
 
@@ -1137,6 +1304,12 @@ continueRidingButton.addEventListener("click", () => {
 });
 
 window.setInterval(() => {
+  renderDashboard();
+  if (
+    sessionRecorder.state !== "stopped" &&
+    Date.now() - lastCheckpointAt >= CHECKPOINT_INTERVAL_MS
+  )
+    checkpointSession();
   if (sessionRecorder.state !== "stopped") {
     sessionTimerLabel.textContent = formatClock(sessionRecorder.timerSeconds);
     renderSessionStats();
@@ -1194,6 +1367,10 @@ const activitiesReady = listActivities()
   })
   .catch((error) => console.error("Could not load saved FIT files", error));
 
+void activitiesReady
+  .then(recoverUnfinishedSession)
+  .catch((error) => console.error("Could not recover unfinished session", error));
+
 updateSessionControls();
 renderSessionStats();
 
@@ -1214,11 +1391,12 @@ function renderConnectedDevices(): void {
     tags.className = "capability-tags";
     const capabilities =
       deviceCapabilities.get(device.id) ?? new Set<TrainingMetric>();
-    if (connectingDevices.has(device.id)) {
+    if (connectingDevices.has(device.id) || reconnectingDevices.has(device.id)) {
       const connecting = document.createElement("span");
       connecting.className = "device-connecting";
-      connecting.innerHTML =
-        '<span class="connecting-spinner" aria-hidden="true"></span>Connecting…';
+      connecting.innerHTML = `<span class="connecting-spinner" aria-hidden="true"></span>${
+        reconnectingDevices.has(device.id) ? "Reconnecting…" : "Connecting…"
+      }`;
       tags.append(connecting);
     } else if (capabilities.size === 0) {
       const waiting = document.createElement("span");
@@ -1246,6 +1424,7 @@ function renderConnectedDevices(): void {
       devices.delete(device.id);
       deviceCapabilities.delete(device.id);
       connectingDevices.delete(device.id);
+      reconnectingDevices.delete(device.id);
       deviceReadings.delete(device.id);
       powerSamplesByDevice.delete(device.id);
       renderDashboard();
@@ -1351,16 +1530,20 @@ async function connectTrainingDevice(
         deviceCapabilities.set(connectedDevice.id, discoveredCapabilities);
         renderConnectedDevices();
       },
-      onDisconnected: () => {
+      onConnectionLost: () => {
         if (!connectedDevice) return;
-        devices.delete(connectedDevice.id);
-        deviceCapabilities.delete(connectedDevice.id);
-        connectingDevices.delete(connectedDevice.id);
+        reconnectingDevices.add(connectedDevice.id);
         deviceReadings.delete(connectedDevice.id);
         powerSamplesByDevice.delete(connectedDevice.id);
         renderDashboard();
         renderConnectedDevices();
-        bluetoothStatusText.textContent = `${connectedDevice.name} disconnected.`;
+        bluetoothStatusText.textContent = `${connectedDevice.name} lost its connection. Reconnecting…`;
+      },
+      onReconnected: () => {
+        if (!connectedDevice) return;
+        reconnectingDevices.delete(connectedDevice.id);
+        renderConnectedDevices();
+        bluetoothStatusText.textContent = `Reconnected to ${connectedDevice.name}.`;
       },
     });
 
@@ -1392,6 +1575,7 @@ async function connectTrainingDevice(
       devices.delete(connectedDevice.id);
       deviceCapabilities.delete(connectedDevice.id);
       connectingDevices.delete(connectedDevice.id);
+      reconnectingDevices.delete(connectedDevice.id);
       deviceReadings.delete(connectedDevice.id);
       powerSamplesByDevice.delete(connectedDevice.id);
       renderDashboard();
@@ -1420,6 +1604,9 @@ bluetoothConnectButton.addEventListener("click", async () => {
   );
   bluetoothConnectButton.disabled = false;
 });
+
+const AUTO_RECONNECT_ROUNDS = 3;
+const AUTO_RECONNECT_ROUND_DELAY_MS = 3_000;
 
 async function reconnectActiveDevices(): Promise<void> {
   const bluetooth = navigator.bluetooth;
@@ -1459,20 +1646,34 @@ async function reconnectActiveDevices(): Promise<void> {
       "Devices selected for auto-reconnect",
       reconnectable.map((device) => ({ id: device.id, name: device.name })),
     );
-    for (const device of reconnectable) {
-      console.info(BLUETOOTH_LOG_PREFIX, "Attempting automatic connection", {
-        id: device.id,
-        name: device.name,
-      });
-      await connectTrainingDevice(
-        (callbacks) =>
-          TrainingBluetoothDevice.connectAuthorized(
-            device,
-            callbacks,
-            getWheelCircumferenceMeters,
-          ),
-        false,
-      );
+    // Sensors often wake up a few seconds after the page, so retry in a few rounds.
+    let pending = reconnectable;
+    for (let round = 1; round <= AUTO_RECONNECT_ROUNDS && pending.length > 0; round += 1) {
+      if (round > 1) {
+        await new Promise((resolve) =>
+          window.setTimeout(resolve, AUTO_RECONNECT_ROUND_DELAY_MS * (round - 1)),
+        );
+      }
+      const failed: BluetoothDevice[] = [];
+      for (const device of pending) {
+        if (devices.has(device.id)) continue;
+        console.info(BLUETOOTH_LOG_PREFIX, "Attempting automatic connection", {
+          id: device.id,
+          name: device.name,
+          round,
+        });
+        const connected = await connectTrainingDevice(
+          (callbacks) =>
+            TrainingBluetoothDevice.connectAuthorized(
+              device,
+              callbacks,
+              getWheelCircumferenceMeters,
+            ),
+          false,
+        );
+        if (!connected) failed.push(device);
+      }
+      pending = failed;
     }
   } catch (error) {
     console.error(
@@ -1486,7 +1687,25 @@ async function reconnectActiveDevices(): Promise<void> {
 }
 
 renderConnectedDevices();
+renderBluetoothSetup();
 void reconnectActiveDevices();
+
+function renderBluetoothSetup(): void {
+  const status = document.querySelector<HTMLElement>("#bluetooth-setup-status");
+  const command = document.querySelector<HTMLElement>("#bluetooth-setup-command");
+  const restoreAvailable = Boolean(navigator.bluetooth?.getDevices);
+  if (status) {
+    status.classList.toggle("available", restoreAvailable);
+    status.textContent = !navigator.bluetooth
+      ? "This browser does not support Web Bluetooth. Use Chrome or Edge on desktop."
+      : restoreAvailable
+        ? "Restoring remembered sensors is available in this browser."
+        : "Restoring remembered sensors is not available yet. Follow the steps below.";
+  }
+  if (command) {
+    command.textContent = `open -na "Google Chrome" --args --user-data-dir="$HOME/.fitfiles-chrome" --enable-features=WebBluetoothNewPermissionsBackend ${window.location.origin}${window.location.pathname}`;
+  }
+}
 
 type ViewName = "analysis" | "training";
 
@@ -1521,7 +1740,7 @@ function metricRow(label: string, value: string, infoDialogId?: string): string 
 }
 
 document.addEventListener("click", (event) => {
-  const button = (event.target as Element | null)?.closest<HTMLButtonElement>(".metric-info");
+  const button = (event.target as Element | null)?.closest<HTMLButtonElement>("button[data-dialog]");
   const dialogId = button?.dataset.dialog;
   if (!dialogId) return;
   document.querySelector<HTMLDialogElement>(`#${dialogId}`)?.showModal();

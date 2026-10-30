@@ -91,8 +91,11 @@ function summarizeRecords(
   };
 }
 
+const RECORD_INTERVAL_MS = 1000;
+
 export class SessionRecorder {
   state: SessionState = "stopped";
+  private sessionId = "";
   private startedAt = 0;
   private activeStartedAt = 0;
   private activeBeforeCurrentRun = 0;
@@ -107,6 +110,7 @@ export class SessionRecorder {
   start(): void {
     const now = Date.now();
     this.state = "running";
+    this.sessionId = crypto.randomUUID();
     this.startedAt = now;
     this.activeStartedAt = now;
     this.activeBeforeCurrentRun = 0;
@@ -115,7 +119,16 @@ export class SessionRecorder {
     this.events = [{ timestamp: now, type: "start" }];
     this.sectionStarts = [0];
     this.capture();
-    this.timer = window.setInterval(() => this.capture(), 1000);
+    // Polls faster than the record rate; tick() keeps records at least one second apart.
+    this.timer = window.setInterval(() => this.tick(), 250);
+  }
+
+  // Also called on incoming sensor data, which keeps recording going when a background
+  // tab throttles timers.
+  tick(timestamp = Date.now()): void {
+    const previous = this.records.at(-1);
+    if (previous && timestamp - previous.timestamp < RECORD_INTERVAL_MS) return;
+    this.capture(timestamp);
   }
 
   pause(): void {
@@ -156,13 +169,33 @@ export class SessionRecorder {
     this.timer = null;
 
     return {
-      id: crypto.randomUUID(),
+      id: this.sessionId,
       startedAt: this.startedAt,
       stoppedAt: now,
       totalTimerTime: this.activeBeforeCurrentRun / 1000,
       distance: this.distance,
       records: [...this.records],
       events: [...this.events],
+      sectionStarts: [...this.sectionStarts]
+    };
+  }
+
+  // Session as if it were stopped at the last record; used for crash recovery checkpoints.
+  snapshot(): RecordedSession | null {
+    const last = this.records.at(-1);
+    if (this.state === "stopped" || !last) return null;
+    const events = this.events.filter((event) => event.timestamp <= last.timestamp);
+    if (events.at(-1)?.type !== "stop_all") {
+      events.push({ timestamp: last.timestamp, type: "stop_all" });
+    }
+    return {
+      id: this.sessionId,
+      startedAt: this.startedAt,
+      stoppedAt: last.timestamp,
+      totalTimerTime: last.timerTime,
+      distance: this.distance,
+      records: [...this.records],
+      events,
       sectionStarts: [...this.sectionStarts]
     };
   }
