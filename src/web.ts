@@ -22,6 +22,12 @@ import {
 import { parseFit } from "./fit.js";
 import { createFitFile } from "./fit-writer.js";
 import {
+  calibrateCdA,
+  DEFAULT_SPEED_MODEL,
+  VirtualSpeed,
+  type SpeedModelSettings,
+} from "./virtual-speed.js";
+import {
   SessionRecorder,
   type LiveSessionStats,
   type RecordedSession,
@@ -198,6 +204,15 @@ app.innerHTML = `
           <span>Wheel circumference</span>
           <span><input id="wheel-circumference" type="number" min="1000" max="3000" step="1" value="2105" /> mm</span>
         </label>
+        <fieldset id="speed-model-settings" class="speed-model-settings">
+          <legend>Virtual speed</legend>
+          <p class="status">With a power source, speed is calculated from power on a flat road, so indoor distance compares to your outdoor rides. Set the reference to a typical flat outdoor ride. Without power, the speed sensor is used.</p>
+          <label class="wheel-setting"><span>Rider weight</span><span><input name="riderMass" type="number" min="30" max="200" step="0.1" /> kg</span></label>
+          <label class="wheel-setting"><span>Bike and gear weight</span><span><input name="bikeMass" type="number" min="3" max="40" step="0.1" /> kg</span></label>
+          <label class="wheel-setting"><span>Reference power</span><span><input name="referencePower" type="number" min="50" max="600" step="1" /> W</span></label>
+          <label class="wheel-setting"><span>Reference speed</span><span><input name="referenceSpeed" type="number" min="10" max="60" step="0.1" /> km/h</span></label>
+          <p class="wheel-setting"><span>Resulting CdA</span><span><output id="speed-model-cda"></output> m²</span></p>
+        </fieldset>
       </article>
       <section class="panel activity-history">
         <div>
@@ -569,6 +584,63 @@ function saveRememberedDevices(): void {
   }
 }
 
+const SPEED_MODEL_KEY = "fitfiles.speedModel";
+const speedModelFields = [
+  "riderMass",
+  "bikeMass",
+  "referencePower",
+  "referenceSpeed",
+] as const;
+
+function loadSpeedModelSettings(): SpeedModelSettings {
+  const settings = { ...DEFAULT_SPEED_MODEL };
+  try {
+    const stored = JSON.parse(localStorage.getItem(SPEED_MODEL_KEY) ?? "{}");
+    for (const field of speedModelFields) {
+      const value = stored?.[field];
+      if (typeof value === "number" && Number.isFinite(value) && value > 0)
+        settings[field] = value;
+    }
+  } catch (error) {
+    console.error("Could not read virtual speed settings", error);
+  }
+  return settings;
+}
+
+let speedModelSettings = loadSpeedModelSettings();
+const virtualSpeed = new VirtualSpeed(() => speedModelSettings);
+
+function setUpSpeedModelSettings(): void {
+  const cdaOutput = document.querySelector<HTMLOutputElement>("#speed-model-cda");
+  const renderCdA = (): void => {
+    if (cdaOutput) cdaOutput.value = calibrateCdA(speedModelSettings).toFixed(3);
+  };
+  for (const field of speedModelFields) {
+    const input = document.querySelector<HTMLInputElement>(
+      `#speed-model-settings [name="${field}"]`,
+    );
+    if (!input) continue;
+    input.value = String(speedModelSettings[field]);
+    input.addEventListener("change", () => {
+      const value = input.valueAsNumber;
+      if (!Number.isFinite(value) || value <= 0) {
+        input.value = String(speedModelSettings[field]);
+        return;
+      }
+      speedModelSettings = { ...speedModelSettings, [field]: value };
+      try {
+        localStorage.setItem(SPEED_MODEL_KEY, JSON.stringify(speedModelSettings));
+      } catch (error) {
+        console.error("Could not save virtual speed settings", error);
+      }
+      renderCdA();
+    });
+  }
+  renderCdA();
+}
+
+setUpSpeedModelSettings();
+
 function getWheelCircumferenceMeters(): number {
   const millimeters = wheelCircumferenceInput.valueAsNumber;
   return Number.isFinite(millimeters) && millimeters > 0
@@ -609,6 +681,12 @@ function getLatestReadings(): TrainingReading {
   if (cadence) reading.cadence = cadence.value;
   if (power) reading.power = power.value;
   if (speed) reading.speed = speed.value;
+  const modelledSpeed = virtualSpeed.update({
+    power: reading.power,
+    cadence: reading.cadence,
+    sensorSpeed: reading.speed,
+  });
+  if (modelledSpeed != null) reading.speed = modelledSpeed;
   return reading;
 }
 

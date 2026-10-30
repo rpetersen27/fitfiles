@@ -1010,3 +1010,23 @@ h1 {
   word-break: break-all;
   user-select: all;
 }
+
+.speed-model-settings {
+  display: grid;
+  gap: 4px;
+  margin: 20px 0 0;
+  padding: 0;
+  border: 0;
+}
+
+.speed-model-settings legend {
+  margin-bottom: 4px;
+  padding: 0;
+  font-weight: 700;
+}
+
+.speed-model-settings .status {
+  max-width: 560px;
+  margin: 0 0 4px;
+  line-height: 1.5;
+}
