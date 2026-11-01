@@ -1,6 +1,6 @@
 // Virtual riding speed from power, so indoor distance compares to outdoor rides.
 //
-//   m · dv/dt = P · η / v − m · g · (Crr · cos θ + sin θ) − ½ · ρ · CdA · v²
+//   k · m · dv/dt = P · η / v − m · g · (Crr · cos θ + sin θ) − ½ · ρ · CdA · v²
 //
 // CdA is calibrated from one reference ride (power ↔ speed on flat road).
 
@@ -32,6 +32,8 @@ const FALLBACK_CDA = 0.37;
 const MIN_CDA = 0.1;
 // Keeps P / v finite when starting from standstill.
 const MIN_DRIVE_SPEED = 1;
+// k < 1 speeds up accelerating and coasting to match a trainer flywheel; steady speed is unaffected.
+const INERTIA_FACTOR = 0.4;
 const STEP_SECONDS = 0.1;
 const MAX_ELAPSED_SECONDS = 60;
 // Without a flywheel speed signal, no pedalling for this long means the flywheel stopped.
@@ -104,7 +106,8 @@ export class VirtualSpeed {
       const drivingForce =
         (power * DRIVETRAIN_EFFICIENCY) / Math.max(this.speed, MIN_DRIVE_SPEED);
       const dragForce = 0.5 * AIR_DENSITY * cda * this.speed ** 2;
-      const acceleration = (drivingForce - gravityForce - dragForce) / mass;
+      const acceleration =
+        (drivingForce - gravityForce - dragForce) / (INERTIA_FACTOR * mass);
       this.speed = Math.max(0, this.speed + acceleration * step);
     }
   }
